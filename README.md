@@ -1,0 +1,2 @@
+# WealthCompass
+WealthCompass is a personal finance dashboard that tracks your net worth, investments, liabilities, and financial growth while giving smart insights to help you make better money decisions.
