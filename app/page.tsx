@@ -1,7 +1,9 @@
+import { Button } from "@/components/ui/button"
+
 export default function Home() {
   return (
-    <h1 className="text-3xl font-bold underline">
-      Hello world!
-    </h1>
+    <div className="flex min-h-screen items-center justify-center">
+      <Button>Click me</Button>
+    </div>
   )
 }
