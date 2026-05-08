@@ -1,4 +1,64 @@
-import { model, models, Schema, type InferSchemaType, type Model } from "mongoose";
+import { deleteModel, model, models, Schema, type InferSchemaType, type Model } from "mongoose";
+
+const profileSchema = new Schema(
+  {
+    username: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 50,
+    },
+    currency: {
+      type: String,
+      default: "USD",
+      trim: true,
+      uppercase: true,
+    },
+    timezone: {
+      type: String,
+      default: "UTC",
+      trim: true,
+    },
+    dateOfBirth: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    presentAddress: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 160,
+    },
+    permanentAddress: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 160,
+    },
+    city: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 80,
+    },
+    postalCode: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 20,
+    },
+    country: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 80,
+    },
+  },
+  {
+    _id: false,
+  }
+);
 
 const userSchema = new Schema(
   {
@@ -33,17 +93,8 @@ const userSchema = new Schema(
       default: "active",
     },
     profile: {
-      currency: {
-        type: String,
-        default: "USD",
-        trim: true,
-        uppercase: true,
-      },
-      timezone: {
-        type: String,
-        default: "UTC",
-        trim: true,
-      },
+      type: profileSchema,
+      default: () => ({}),
     },
     onboardingComplete: {
       type: Boolean,
@@ -62,5 +113,25 @@ const userSchema = new Schema(
 
 export type UserDocument = InferSchemaType<typeof userSchema>;
 
+function hasCurrentProfileSchema(existingModel: Model<UserDocument>) {
+  return [
+    "profile.username",
+    "profile.currency",
+    "profile.timezone",
+    "profile.dateOfBirth",
+    "profile.presentAddress",
+    "profile.permanentAddress",
+    "profile.city",
+    "profile.postalCode",
+    "profile.country",
+  ].every((path) => existingModel.schema.path(path));
+}
+
+const existingUserModel = models.User as Model<UserDocument> | undefined;
+
+if (existingUserModel && !hasCurrentProfileSchema(existingUserModel)) {
+  deleteModel("User");
+}
+
 export const User =
-  (models.User as Model<UserDocument>) || model<UserDocument>("User", userSchema);
+  (models.User as Model<UserDocument> | undefined) || model<UserDocument>("User", userSchema);

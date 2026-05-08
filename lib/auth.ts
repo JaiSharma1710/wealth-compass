@@ -31,8 +31,15 @@ type PublicUserSource = {
   role: string;
   profile?:
     | {
+      username?: string;
       currency?: string;
       timezone?: string;
+      dateOfBirth?: string;
+      presentAddress?: string;
+      permanentAddress?: string;
+      city?: string;
+      postalCode?: string;
+      country?: string;
     }
     | null;
   createdAt?: Date | null;
@@ -45,12 +52,37 @@ export type SafeUser = {
   email: string;
   role: string;
   profile: {
+    username: string;
     currency: string;
     timezone: string;
+    dateOfBirth: string;
+    presentAddress: string;
+    permanentAddress: string;
+    city: string;
+    postalCode: string;
+    country: string;
   };
   createdAt: string;
   lastLoginAt: string | null;
 };
+
+export function getDefaultUsername(fullName: string, email?: string) {
+  const nameBased = fullName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "");
+
+  if (nameBased) {
+    return nameBased;
+  }
+
+  return (email || "")
+    .split("@")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "")
+    .slice(0, 50);
+}
 
 export function getAuthCookieOptions() {
   return {
@@ -96,8 +128,15 @@ export function buildPublicUser(user: PublicUserSource): SafeUser {
     email: user.email,
     role: user.role,
     profile: {
+      username: user.profile?.username || getDefaultUsername(user.fullName, user.email),
       currency: user.profile?.currency || "USD",
       timezone: user.profile?.timezone || "UTC",
+      dateOfBirth: user.profile?.dateOfBirth || "",
+      presentAddress: user.profile?.presentAddress || "",
+      permanentAddress: user.profile?.permanentAddress || "",
+      city: user.profile?.city || "",
+      postalCode: user.profile?.postalCode || "",
+      country: user.profile?.country || "",
     },
     createdAt: user.createdAt?.toISOString() || new Date().toISOString(),
     lastLoginAt: user.lastLoginAt?.toISOString() || null,

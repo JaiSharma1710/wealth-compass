@@ -1,13 +1,9 @@
 export function SectionPage({ title }: { title: string }) {
   return (
-    <div className="flex min-h-[calc(100svh-6rem)] flex-col gap-3">
-      <section className="rounded-[1.75rem] border border-black/5 bg-white px-5 py-4 shadow-sm">
-        <h1 className="text-[1.55rem] font-semibold tracking-tight text-neutral-950 sm:text-[1.75rem]">
-          {title}
-        </h1>
+    <div className="flex h-full min-h-full flex-col bg-[#f5f7fb]">
+      <section className="flex h-full min-h-full flex-1 items-center justify-center border border-dashed border-[#d9dfeb] bg-[#f5f7fb] text-sm font-medium tracking-[0.02em] text-[#9aa3b2]">
+        {title}
       </section>
-
-      <section className="flex-1 rounded-[1.75rem] border border-dashed border-neutral-200 bg-white/75 shadow-sm" />
     </div>
   );
 }

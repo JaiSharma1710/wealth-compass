@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 
 import { Button } from "@/components/ui/button";
 
@@ -11,28 +12,45 @@ type AuthFormProps = {
   mode: "signin" | "signup";
 };
 
+type AuthFormValues = {
+  fullName: string;
+  email: string;
+  password: string;
+};
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function AuthForm({ cta, helper, mode }: AuthFormProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<AuthFormValues>({
+    defaultValues: {
+      fullName: "",
+      email: "",
+      password: "",
+    },
+  });
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
+  async function onSubmit(values: AuthFormValues) {
+    setServerError(null);
 
-    const formData = new FormData(event.currentTarget);
     const payload =
       mode === "signup"
         ? {
-            fullName: String(formData.get("fullName") || ""),
-            email: String(formData.get("email") || ""),
-            password: String(formData.get("password") || ""),
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          }
+          fullName: values.fullName.trim(),
+          email: values.email.trim(),
+          password: values.password,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }
         : {
-            email: String(formData.get("email") || ""),
-            password: String(formData.get("password") || ""),
-          };
+          email: values.email.trim(),
+          password: values.password,
+        };
 
     const response = await fetch(mode === "signup" ? "/api/signup" : "/api/signin", {
       method: "POST",
@@ -47,7 +65,7 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
       | null;
 
     if (!response.ok) {
-      setError(result?.message || "Authentication failed.");
+      setServerError(result?.message || "Authentication failed.");
       return;
     }
 
@@ -57,43 +75,73 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
     });
   }
 
+  const isBusy = isSubmitting || isPending;
+
   return (
-    <form className="space-y-5" onSubmit={handleSubmit}>
+    <form className="space-y-5" onSubmit={handleSubmit(onSubmit)}>
       <div>
         <p className="text-sm text-muted-foreground">{helper}</p>
       </div>
+
       {mode === "signup" ? (
         <Field
           autoComplete="name"
+          error={errors.fullName?.message}
           label="Full name"
-          name="fullName"
           placeholder="Jai Sharma"
+          registration={register("fullName", {
+            required: "Full name is required.",
+            minLength: {
+              value: 2,
+              message: "Full name must be at least 2 characters long.",
+            },
+          })}
           type="text"
         />
       ) : null}
+
       <Field
         autoComplete="email"
+        error={errors.email?.message}
         label="Email"
-        name="email"
         placeholder="you@example.com"
+        registration={register("email", {
+          required: "Email is required.",
+          pattern: {
+            value: emailPattern,
+            message: "Please enter a valid email address.",
+          },
+        })}
         type="email"
       />
+
       <Field
         autoComplete={mode === "signup" ? "new-password" : "current-password"}
+        error={errors.password?.message}
         label="Password"
-        name="password"
         placeholder={
           mode === "signup" ? "Create a strong password" : "Enter your password"
         }
+        registration={register("password", {
+          required: "Password is required.",
+          minLength: mode === "signup"
+            ? {
+              value: 8,
+              message: "Password must be at least 8 characters long.",
+            }
+            : undefined,
+        })}
         type="password"
       />
-      {error ? (
+
+      {serverError ? (
         <div className="rounded-2xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {error}
+          {serverError}
         </div>
       ) : null}
-      <Button className="w-full" disabled={isPending} size="lg" type="submit">
-        {isPending ? "Please wait..." : cta}
+
+      <Button className="w-full" disabled={isBusy} size="lg" type="submit">
+        {isBusy ? "Please wait..." : cta}
       </Button>
     </form>
   );
@@ -101,16 +149,18 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
 
 function Field({
   label,
-  name,
   type,
   placeholder,
   autoComplete,
+  registration,
+  error,
 }: {
   label: string;
-  name: string;
   type: string;
   placeholder: string;
   autoComplete?: string;
+  registration: UseFormRegisterReturn;
+  error?: string;
 }) {
   return (
     <label className="block space-y-2">
@@ -118,11 +168,11 @@ function Field({
       <input
         autoComplete={autoComplete}
         className="flex h-12 w-full rounded-xl border border-border bg-background px-4 text-base shadow-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20"
-        name={name}
         placeholder={placeholder}
-        required
         type={type}
+        {...registration}
       />
+      {error ? <span className="text-sm text-destructive">{error}</span> : null}
     </label>
   );
 }

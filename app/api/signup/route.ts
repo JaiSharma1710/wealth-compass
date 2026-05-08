@@ -1,7 +1,13 @@
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
-import { AUTH_COOKIE_NAME, buildPublicUser, getAuthCookieOptions, signAuthToken } from "@/lib/auth";
+import {
+  AUTH_COOKIE_NAME,
+  buildPublicUser,
+  getAuthCookieOptions,
+  getDefaultUsername,
+  signAuthToken,
+} from "@/lib/auth";
 import { connectToDatabase } from "@/lib/mongodb";
 import { User } from "@/lib/models/user";
 
@@ -68,8 +74,15 @@ export async function POST(request: Request) {
     passwordHash,
     lastLoginAt: new Date(),
     profile: {
+      username: getDefaultUsername(fullName, email),
       currency: "USD",
       timezone: timezone || "UTC",
+      dateOfBirth: "",
+      presentAddress: "",
+      permanentAddress: "",
+      city: "",
+      postalCode: "",
+      country: "",
     },
   });
 
