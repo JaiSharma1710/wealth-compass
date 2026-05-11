@@ -1,6 +1,7 @@
 import "server-only";
 
 import { connectToDatabase } from "@/lib/mongodb";
+import { CurrencyCatalog, type CurrencyEntry } from "@/lib/models/currency";
 
 export type CurrencyRecord = {
   code: string;
@@ -8,27 +9,19 @@ export type CurrencyRecord = {
   symbol: string;
 };
 
-type RawCurrencyRecord = {
-  code?: string;
-  name?: string;
-  symbol?: string;
-};
-
 export async function getCurrencyOptions() {
-  const connection = await connectToDatabase();
-  const db = connection.connection.db;
+  await connectToDatabase();
 
-  if (!db) {
-    throw new Error("Database connection is not available.");
-  }
+  const rawDocument = (await CurrencyCatalog.findOne({}, { _id: 0 }).lean()) as
+    | Record<string, unknown>
+    | null;
 
-  const rawDocument = await db.collection("currency").findOne({}, { projection: { _id: 0 } });
   if (!rawDocument) {
     return [] satisfies CurrencyRecord[];
   }
 
   return Object.values(rawDocument)
-    .map((entry) => entry as RawCurrencyRecord)
+    .map((entry) => entry as CurrencyEntry)
     .map((entry) => ({
       code: String(entry.code || "").trim().toUpperCase(),
       name: String(entry.name || "").trim(),

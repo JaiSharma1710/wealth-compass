@@ -1,6 +1,7 @@
 import "server-only";
 
 import { connectToDatabase } from "@/lib/mongodb";
+import { Country } from "@/lib/models/country";
 
 export type CountryRecord = {
   code: string;
@@ -8,18 +9,11 @@ export type CountryRecord = {
 };
 
 export async function getCountryOptions() {
-  const connection = await connectToDatabase();
-  const db = connection.connection.db;
+  await connectToDatabase();
 
-  if (!db) {
-    throw new Error("Database connection is not available.");
-  }
-
-  const countries = await db
-    .collection("countries")
-    .find({}, { projection: { _id: 0, code: 1, name: 1 } })
+  const countries = await Country.find({}, { _id: 0, code: 1, name: 1 })
     .sort({ name: 1 })
-    .toArray();
+    .lean();
 
   return countries
     .map((country) => ({
