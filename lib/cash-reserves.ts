@@ -1,12 +1,17 @@
 import "server-only";
 
+import { Types } from "mongoose";
+
 import { connectToDatabase } from "@/lib/mongodb";
 import { CashReserveEntry } from "@/lib/models/cash-reserve-entry";
 import type {
   CashReserveDashboardData,
-  CashReserveEntrySummary,
   CashReserveMonthSummary,
+  CashReserveRecentActivityFilters,
+  CashReserveRecentActivityPage,
 } from "@/lib/cash-reserves.types";
+
+const RECENT_ACTIVITY_PAGE_SIZE = 10;
 
 function monthKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -33,6 +38,149 @@ function getMonthLabel(date: Date) {
   return new Intl.DateTimeFormat("en", {
     month: "short",
   }).format(date);
+}
+
+function parseDateOnly(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+  const parsed = new Date(Number(year), Number(month) - 1, Number(day));
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function endOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+}
+
+async function getRecentActivityAvailableYears(userId: string) {
+  const years = await CashReserveEntry.aggregate<{ _id: number }>([
+    {
+      $match: {
+        userId: new Types.ObjectId(userId),
+      },
+    },
+    {
+      $group: {
+        _id: {
+          $year: "$entryDate",
+        },
+      },
+    },
+    {
+      $sort: {
+        _id: -1,
+      },
+    },
+  ]);
+
+  return years.map((entry) => entry._id);
+}
+
+export async function getCashReserveRecentActivity(
+  userId: string,
+  options?: {
+    page?: number;
+    pageSize?: number;
+    month?: number | null;
+    year?: number | null;
+    date?: string | null;
+    entryType?: CashReserveRecentActivityFilters["entryType"];
+  }
+): Promise<CashReserveRecentActivityPage> {
+  await connectToDatabase();
+
+  const pageSize = Math.min(Math.max(options?.pageSize || RECENT_ACTIVITY_PAGE_SIZE, 1), RECENT_ACTIVITY_PAGE_SIZE);
+  const page = Math.max(options?.page || 1, 1);
+  const month =
+    typeof options?.month === "number" && options.month >= 1 && options.month <= 12
+      ? options.month
+      : null;
+  const year =
+    typeof options?.year === "number" && options.year >= 1900 && options.year <= 9999
+      ? options.year
+      : null;
+  const entryType =
+    options?.entryType === "credit" || options?.entryType === "debit"
+      ? options.entryType
+      : "all";
+  const date = options?.date?.trim() || null;
+  const parsedDate = date ? parseDateOnly(date) : null;
+  const query: Record<string, unknown> = { userId };
+
+  if (entryType !== "all") {
+    query.entryType = entryType;
+  }
+
+  if (parsedDate) {
+    query.entryDate = {
+      $gte: startOfDay(parsedDate),
+      $lt: endOfDay(parsedDate),
+    };
+  } else if (year && month) {
+    query.entryDate = {
+      $gte: new Date(year, month - 1, 1),
+      $lt: new Date(year, month, 1),
+    };
+  } else if (year) {
+    query.entryDate = {
+      $gte: new Date(year, 0, 1),
+      $lt: new Date(year + 1, 0, 1),
+    };
+  } else if (month) {
+    query.$expr = {
+      $eq: [{ $month: "$entryDate" }, month],
+    };
+  }
+
+  const [entries, totalCount, availableYears] = await Promise.all([
+    CashReserveEntry.find(query)
+      .sort({ entryDate: -1, createdAt: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    CashReserveEntry.countDocuments(query),
+    getRecentActivityAvailableYears(userId),
+  ]);
+
+  const totalPages = totalCount > 0 ? Math.ceil(totalCount / pageSize) : 1;
+  const safePage = Math.min(page, totalPages);
+  const normalizedEntries =
+    safePage === page
+      ? entries
+      : await CashReserveEntry.find(query)
+          .sort({ entryDate: -1, createdAt: -1 })
+          .skip((safePage - 1) * pageSize)
+          .limit(pageSize)
+          .lean();
+
+  return {
+    entries: normalizedEntries.map((entry) => ({
+      id: String(entry._id),
+      date: new Date(entry.entryDate).toISOString(),
+      amount: roundCurrency(entry.amount),
+      entryType: entry.entryType,
+    })),
+    page: safePage,
+    pageSize,
+    totalCount,
+    totalPages,
+    filters: {
+      month,
+      year,
+      date: parsedDate ? date : null,
+      entryType,
+    },
+    availableYears,
+  };
 }
 
 export async function getCashReserveDashboard(userId: string): Promise<CashReserveDashboardData> {
@@ -99,25 +247,16 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
         : 100
       : roundCurrency((monthOverMonthChangeAmount / Math.abs(previousMonthBalance)) * 100);
 
-  const recentEntries: CashReserveEntrySummary[] = [...entries]
-    .sort((left, right) => {
-      return (
-        new Date(right.entryDate).getTime() - new Date(left.entryDate).getTime()
-      );
-    })
-    .slice(0, 8)
-    .map((entry) => ({
-      id: String(entry._id),
-      date: new Date(entry.entryDate).toISOString(),
-      amount: roundCurrency(entry.amount),
-      entryType: entry.entryType,
-    }));
+  const recentActivity = await getCashReserveRecentActivity(userId, {
+    page: 1,
+    pageSize: RECENT_ACTIVITY_PAGE_SIZE,
+  });
 
   return {
     totalBalance,
     monthOverMonthChangePct,
     monthOverMonthChangeAmount,
     months,
-    recentEntries,
+    recentActivity,
   };
 }

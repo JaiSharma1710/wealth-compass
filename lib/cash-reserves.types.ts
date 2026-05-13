@@ -16,10 +16,27 @@ export type CashReserveEntrySummary = {
   entryType: CashReserveEntryType;
 };
 
+export type CashReserveRecentActivityFilters = {
+  month: number | null;
+  year: number | null;
+  date: string | null;
+  entryType: CashReserveEntryType | "all";
+};
+
+export type CashReserveRecentActivityPage = {
+  entries: CashReserveEntrySummary[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  filters: CashReserveRecentActivityFilters;
+  availableYears: number[];
+};
+
 export type CashReserveDashboardData = {
   totalBalance: number;
   monthOverMonthChangePct: number;
   monthOverMonthChangeAmount: number;
   months: CashReserveMonthSummary[];
-  recentEntries: CashReserveEntrySummary[];
+  recentActivity: CashReserveRecentActivityPage;
 };

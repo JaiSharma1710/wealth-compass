@@ -1,13 +1,17 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowDownRight, ArrowUpRight, Landmark, Plus, Wallet } from "lucide-react";
 import { useForm, useWatch } from "react-hook-form";
 import toast from "react-hot-toast";
 
-import type { CashReserveDashboardData, CashReserveEntryType } from "@/lib/cash-reserves.types";
+import type {
+  CashReserveDashboardData,
+  CashReserveEntryType,
+  CashReserveRecentActivityPage,
+} from "@/lib/cash-reserves.types";
 
 type CashReservesViewProps = {
   currencyCode: string;
@@ -20,10 +24,38 @@ type AddEntryValues = {
   entryType: CashReserveEntryType;
 };
 
+type ActivityQueryState = {
+  page: number;
+  month: string;
+  year: string;
+  date: string;
+  entryType: CashReserveEntryType | "all";
+};
+
+const MONTH_FILTER_OPTIONS = [
+  { label: "Jan", value: "1" },
+  { label: "Feb", value: "2" },
+  { label: "Mar", value: "3" },
+  { label: "Apr", value: "4" },
+  { label: "May", value: "5" },
+  { label: "Jun", value: "6" },
+  { label: "Jul", value: "7" },
+  { label: "Aug", value: "8" },
+  { label: "Sep", value: "9" },
+  { label: "Oct", value: "10" },
+  { label: "Nov", value: "11" },
+  { label: "Dec", value: "12" },
+] as const;
+
 export function CashReservesView({ currencyCode, initialData }: CashReservesViewProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [activityState, setActivityState] = useState<{
+    activity: CashReserveRecentActivityPage;
+    query: ActivityQueryState;
+  } | null>(null);
+  const [isActivityLoading, setIsActivityLoading] = useState(false);
   const {
     control,
     register,
@@ -39,6 +71,22 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
   });
 
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
+  const snapshotMonths = useMemo(() => [...initialData.months].reverse(), [initialData.months]);
+  const trendMonths = useMemo(
+    () =>
+      initialData.months.map((month) => ({
+        ...month,
+        debits: -month.debits,
+      })),
+    [initialData.months]
+  );
+  const trendAxisExtent = useMemo(() => {
+    const maxMovement = initialData.months.reduce((max, month) => {
+      return Math.max(max, month.credits, month.debits);
+    }, 0);
+
+    return maxMovement > 0 ? maxMovement : 1;
+  }, [initialData.months]);
   const selectedEntryType = useWatch({
     control,
     name: "entryType",
@@ -48,6 +96,86 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
   const trendAmountLabel = `${trendUp ? "+" : "-"}${formatter.format(
     Math.abs(initialData.monthOverMonthChangeAmount)
   )}`;
+  const activity = activityState?.activity ?? initialData.recentActivity;
+  const activityQuery = activityState?.query ?? createActivityQueryState(initialData.recentActivity);
+  const hasActivityInteraction = activityState !== null;
+  const hasActivityFilters = Boolean(
+    activityQuery.month || activityQuery.year || activityQuery.date || activityQuery.entryType !== "all"
+  );
+  const activityRangeStart = activity.totalCount ? (activity.page - 1) * activity.pageSize + 1 : 0;
+  const activityRangeEnd = activity.totalCount ? activityRangeStart + activity.entries.length - 1 : 0;
+
+  useEffect(() => {
+    if (!hasActivityInteraction) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadActivity() {
+      const params = new URLSearchParams({
+        page: String(activityQuery.page),
+        pageSize: "10",
+      });
+
+      if (activityQuery.month) {
+        params.set("month", activityQuery.month);
+      }
+
+      if (activityQuery.year) {
+        params.set("year", activityQuery.year);
+      }
+
+      if (activityQuery.date) {
+        params.set("date", activityQuery.date);
+      }
+
+      if (activityQuery.entryType !== "all") {
+        params.set("entryType", activityQuery.entryType);
+      }
+
+      setIsActivityLoading(true);
+
+      try {
+        const response = await fetch(`/api/cash-reserves?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        const result = (await response.json().catch(() => null)) as
+          | { activity?: CashReserveRecentActivityPage; message?: string }
+          | null;
+
+        if (!response.ok || !result?.activity) {
+          throw new Error(result?.message || "Unable to load recent activity.");
+        }
+
+        const nextActivity = result.activity;
+
+        setActivityState((current) => ({
+          activity: nextActivity,
+          query: current?.query ?? activityQuery,
+        }));
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        toast.error(error instanceof Error ? error.message : "Unable to load recent activity.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsActivityLoading(false);
+        }
+      }
+    }
+
+    void loadActivity();
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    hasActivityInteraction,
+    activityQuery,
+  ]);
 
   async function onSubmit(values: AddEntryValues) {
     const response = await fetch("/api/cash-reserves", {
@@ -78,10 +206,29 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
       entryType: "credit",
     });
     setIsModalOpen(false);
+    setActivityState(null);
+    setIsActivityLoading(false);
 
     startTransition(() => {
       router.refresh();
     });
+  }
+
+  function updateActivityQuery(updater: (current: ActivityQueryState) => ActivityQueryState) {
+    setActivityState((current) => ({
+      activity: current?.activity ?? initialData.recentActivity,
+      query: updater(current?.query ?? createActivityQueryState(initialData.recentActivity)),
+    }));
+  }
+
+  function resetActivityFilters() {
+    updateActivityQuery(() => ({
+      page: 1,
+      month: "",
+      year: "",
+      date: "",
+      entryType: "all",
+    }));
   }
 
   return (
@@ -154,7 +301,7 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#eef2f7] bg-white">
-                  {initialData.months.map((month) => (
+                  {snapshotMonths.map((month) => (
                     <tr key={month.key} className="text-sm text-neutral-700">
                       <td className="px-4 py-3 font-medium text-neutral-950">{month.label}</td>
                       <td className="px-4 py-3 text-emerald-600">{formatter.format(month.credits)}</td>
@@ -173,19 +320,13 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Reserve Trend</h3>
-                <p className="mt-1 text-sm text-neutral-500">Closing balance for the last 6 months.</p>
+                <p className="mt-1 text-sm text-neutral-500">Monthly credit and debit totals for the last 6 months.</p>
               </div>
             </div>
 
             <div className="mt-6 h-[21rem]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={initialData.months} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="cashReserveFill" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="5%" stopColor="#111111" stopOpacity={0.22} />
-                      <stop offset="95%" stopColor="#111111" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
+                <BarChart data={trendMonths} barCategoryGap={18} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke="#e8edf4" strokeDasharray="4 4" vertical={false} />
                   <XAxis
                     axisLine={false}
@@ -196,7 +337,8 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                   <YAxis
                     axisLine={false}
                     tick={{ fill: "#8a95a5", fontSize: 12 }}
-                    tickFormatter={(value: number) => compactCurrency(value, formatter)}
+                    domain={[-trendAxisExtent, trendAxisExtent]}
+                    tickFormatter={(value) => compactCurrency(Math.abs(Number(value) || 0), formatter)}
                     tickLine={false}
                     width={64}
                   />
@@ -206,18 +348,15 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                       borderRadius: "16px",
                       boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
                     }}
-                    formatter={(value: number) => formatter.format(value)}
+                    formatter={(value, name) => [
+                      formatter.format(Math.abs(Number(value) || 0)),
+                      name === "credits" ? "Credit" : "Debit",
+                    ]}
                     labelStyle={{ color: "#111111", fontWeight: 600 }}
                   />
-                  <Area
-                    dataKey="closingBalance"
-                    fill="url(#cashReserveFill)"
-                    fillOpacity={1}
-                    stroke="#111111"
-                    strokeWidth={3}
-                    type="monotone"
-                  />
-                </AreaChart>
+                  <Bar dataKey="credits" fill="#16a34a" name="credits" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="debits" fill="#dc2626" name="debits" radius={[8, 8, 0, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </section>
@@ -227,13 +366,127 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Recent Activity</h3>
-              <p className="mt-1 text-sm text-neutral-500">Most recent cash reserve entries.</p>
+              <p className="mt-1 text-sm text-neutral-500">Filter and review cash reserve activity in pages of 10.</p>
             </div>
           </div>
 
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-[0.9fr_0.9fr_1.1fr_0.9fr_auto]">
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Month</span>
+              <select
+                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+                onChange={(event) => {
+                  const value = event.target.value;
+
+                  updateActivityQuery((current) => ({
+                    ...current,
+                    page: 1,
+                    month: value,
+                    date: "",
+                  }));
+                }}
+                value={activityQuery.month}
+              >
+                <option value="">All months</option>
+                {MONTH_FILTER_OPTIONS.map((month) => (
+                  <option key={month.value} value={month.value}>
+                    {month.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Year</span>
+              <select
+                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+                onChange={(event) => {
+                  const value = event.target.value;
+
+                  updateActivityQuery((current) => ({
+                    ...current,
+                    page: 1,
+                    year: value,
+                    date: "",
+                  }));
+                }}
+                value={activityQuery.year}
+              >
+                <option value="">All years</option>
+                {activity.availableYears.map((year) => (
+                  <option key={year} value={String(year)}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Date</span>
+              <input
+                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(event) => {
+                  const value = event.target.value;
+
+                  updateActivityQuery((current) => ({
+                    ...current,
+                    page: 1,
+                    date: value,
+                    month: value ? "" : current.month,
+                    year: value ? "" : current.year,
+                  }));
+                }}
+                type="date"
+                value={activityQuery.date}
+              />
+            </label>
+
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Type</span>
+              <select
+                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+                onChange={(event) => {
+                  const value = event.target.value as ActivityQueryState["entryType"];
+
+                  updateActivityQuery((current) => ({
+                    ...current,
+                    page: 1,
+                    entryType: value,
+                  }));
+                }}
+                value={activityQuery.entryType}
+              >
+                <option value="all">All types</option>
+                <option value="credit">Credit</option>
+                <option value="debit">Debit</option>
+              </select>
+            </label>
+
+            <div className="flex items-end">
+              <button
+                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] px-4 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!hasActivityFilters && activity.page === 1}
+                onClick={resetActivityFilters}
+                type="button"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-neutral-500">
+            <p>
+              {activity.totalCount
+                ? `Showing ${activityRangeStart}-${activityRangeEnd} of ${activity.totalCount} entries`
+                : "No entries to show"}
+            </p>
+            {isActivityLoading ? <p>Loading activity...</p> : null}
+          </div>
+
           <div className="mt-5 grid gap-3">
-            {initialData.recentEntries.length ? (
-              initialData.recentEntries.map((entry) => {
+            {activity.entries.length ? (
+              activity.entries.map((entry) => {
                 const positive = entry.entryType === "credit";
 
                 return (
@@ -268,9 +521,43 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
               })
             ) : (
               <div className="rounded-[1.5rem] border border-dashed border-[#d9dfeb] bg-[#fafaf8] px-5 py-10 text-center text-sm text-neutral-500">
-                No cash reserve entries yet. Add your first credit or debit to start tracking.
+                {hasActivityFilters
+                  ? "No cash reserve entries match the selected filters."
+                  : "No cash reserve entries yet. Add your first credit or debit to start tracking."}
               </div>
             )}
+          </div>
+
+          <div className="mt-5 flex items-center justify-end gap-3">
+            <button
+              className="rounded-[1rem] border border-[#dbe2ee] px-4 py-2 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={activity.page <= 1 || isActivityLoading}
+              onClick={() => {
+                updateActivityQuery((current) => ({
+                  ...current,
+                  page: Math.max(1, current.page - 1),
+                }));
+              }}
+              type="button"
+            >
+              Previous
+            </button>
+            <p className="min-w-[7rem] text-center text-sm font-medium text-neutral-600">
+              Page {activity.page} of {activity.totalPages}
+            </p>
+            <button
+              className="rounded-[1rem] border border-[#111111] bg-[#111111] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={activity.page >= activity.totalPages || isActivityLoading}
+              onClick={() => {
+                updateActivityQuery((current) => ({
+                  ...current,
+                  page: Math.min(activity.totalPages, current.page + 1),
+                }));
+              }}
+              type="button"
+            >
+              Next
+            </button>
           </div>
         </section>
       </div>
@@ -467,4 +754,14 @@ function getAverageBalance(months: CashReserveDashboardData["months"]) {
 
   const total = months.reduce((sum, month) => sum + month.closingBalance, 0);
   return total / months.length;
+}
+
+function createActivityQueryState(activity: CashReserveRecentActivityPage): ActivityQueryState {
+  return {
+    page: activity.page,
+    month: activity.filters.month ? String(activity.filters.month) : "",
+    year: activity.filters.year ? String(activity.filters.year) : "",
+    date: activity.filters.date || "",
+    entryType: activity.filters.entryType,
+  };
 }

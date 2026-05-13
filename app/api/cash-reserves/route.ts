@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth";
-import { getCashReserveDashboard } from "@/lib/cash-reserves";
+import { getCashReserveDashboard, getCashReserveRecentActivity } from "@/lib/cash-reserves";
 import { connectToDatabase } from "@/lib/mongodb";
 import { CashReserveEntry } from "@/lib/models/cash-reserve-entry";
 
@@ -37,6 +37,36 @@ function getTokenFromRequest(request: Request) {
     : null;
 }
 
+function parsePositiveInt(value: string | null, fallback: number) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function parseMonth(value: string | null) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 12) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseYear(value: string | null) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 1900 || parsed > 9999) {
+    return null;
+  }
+
+  return parsed;
+}
+
 export async function GET(request: Request) {
   const session = await verifyAuthToken(getTokenFromRequest(request));
 
@@ -44,9 +74,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
   }
 
-  const dashboard = await getCashReserveDashboard(session.sub);
+  const { searchParams } = new URL(request.url);
+  const entryTypeParam = searchParams.get("entryType");
+  const activity = await getCashReserveRecentActivity(session.sub, {
+    page: parsePositiveInt(searchParams.get("page"), 1),
+    pageSize: parsePositiveInt(searchParams.get("pageSize"), 10),
+    month: parseMonth(searchParams.get("month")),
+    year: parseYear(searchParams.get("year")),
+    date: searchParams.get("date"),
+    entryType: entryTypeParam === "credit" || entryTypeParam === "debit" ? entryTypeParam : "all",
+  });
 
-  return NextResponse.json({ dashboard });
+  return NextResponse.json({ activity });
 }
 
 export async function POST(request: Request) {
