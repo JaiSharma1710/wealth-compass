@@ -22,6 +22,19 @@ type HoldingAccumulator = {
   latestKnownNav: number;
 };
 
+type RealizedTransactionResult = {
+  averageBuyNav: number;
+  realizedCostBasisAmount: number;
+  realizedProfitAmount: number;
+};
+
+type LedgerResult = {
+  holdings: ReturnType<typeof normalizeHoldings>;
+  realizedByTransactionId: Map<string, RealizedTransactionResult>;
+  totalRealizedCostBasisAmount: number;
+  totalRealizedProfitAmount: number;
+};
+
 type TransactionRecord = {
   _id: { toString(): string } | string;
   schemeCode: number;
@@ -51,6 +64,10 @@ function startOfMonth(date: Date) {
 
 function endOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+}
+
+function endOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
 }
 
 function getMonthStarts(count: number) {
@@ -192,11 +209,14 @@ function normalizeHoldings(holdings: Map<number, HoldingAccumulator>) {
     .sort((left, right) => right.currentValue - left.currentValue);
 }
 
-function buildHoldingsFromTransactions(
+function buildLedgerFromTransactions(
   transactions: TransactionRecord[],
   cutoffDate?: Date
-) {
+): LedgerResult {
   const holdings = new Map<number, HoldingAccumulator>();
+  const realizedByTransactionId = new Map<string, RealizedTransactionResult>();
+  let totalRealizedCostBasisAmount = 0;
+  let totalRealizedProfitAmount = 0;
 
   for (const transaction of transactions) {
     if (cutoffDate && transaction.transactionDate > cutoffDate) {
@@ -220,8 +240,18 @@ function buildHoldingsFromTransactions(
     } else {
       const averageNavBeforeSell =
         current.units > 0 ? current.investedAmount / current.units : 0;
+      const realizedCostBasisAmount = averageNavBeforeSell * transaction.units;
+      const realizedProfitAmount = transaction.amount - realizedCostBasisAmount;
+
+      realizedByTransactionId.set(String(transaction._id), {
+        averageBuyNav: roundCurrency(averageNavBeforeSell),
+        realizedCostBasisAmount: roundCurrency(realizedCostBasisAmount),
+        realizedProfitAmount: roundCurrency(realizedProfitAmount),
+      });
+      totalRealizedCostBasisAmount += realizedCostBasisAmount;
+      totalRealizedProfitAmount += realizedProfitAmount;
       current.units -= transaction.units;
-      current.investedAmount -= averageNavBeforeSell * transaction.units;
+      current.investedAmount -= realizedCostBasisAmount;
     }
 
     if (current.units <= 0.000001) {
@@ -236,7 +266,19 @@ function buildHoldingsFromTransactions(
     holdings.set(transaction.schemeCode, current);
   }
 
-  return normalizeHoldings(holdings);
+  return {
+    holdings: normalizeHoldings(holdings),
+    realizedByTransactionId,
+    totalRealizedCostBasisAmount: roundCurrency(totalRealizedCostBasisAmount),
+    totalRealizedProfitAmount: roundCurrency(totalRealizedProfitAmount),
+  };
+}
+
+function buildHoldingsFromTransactions(
+  transactions: TransactionRecord[],
+  cutoffDate?: Date
+) {
+  return buildLedgerFromTransactions(transactions, cutoffDate).holdings;
 }
 
 async function applyLiveCurrentNav(
@@ -348,7 +390,7 @@ export async function getMutualFundHoldingsOnDate(
   date: Date
 ) {
   const transactions = await loadTransactions(userId);
-  const holdings = buildHoldingsFromTransactions(transactions, endOfMonth(date));
+  const holdings = buildHoldingsFromTransactions(transactions, endOfDay(date));
 
   return holdings.find((holding) => holding.schemeCode === schemeCode) || null;
 }
@@ -535,7 +577,8 @@ export async function getMutualFundDashboard(
     };
   });
 
-  const liveHoldings = await applyLiveCurrentNav(buildHoldingsFromTransactions(transactions));
+  const ledger = buildLedgerFromTransactions(transactions);
+  const liveHoldings = await applyLiveCurrentNav(ledger.holdings);
   const holdings = mapHoldingsToSummary(liveHoldings);
   const totalPortfolioValue = roundCurrency(
     holdings.reduce((sum, holding) => sum + holding.currentValue, 0)
@@ -543,16 +586,8 @@ export async function getMutualFundDashboard(
   const totalInvestedAmount = roundCurrency(
     holdings.reduce((sum, holding) => sum + holding.investedAmount, 0)
   );
-  const totalRealizedProfitAmount = roundCurrency(
-    transactions.reduce((sum, transaction) => {
-      return sum + (transaction.realizedProfitAmount || 0);
-    }, 0)
-  );
-  const totalRealizedCostBasisAmount = roundCurrency(
-    transactions.reduce((sum, transaction) => {
-      return sum + (transaction.realizedCostBasisAmount || 0);
-    }, 0)
-  );
+  const totalRealizedProfitAmount = ledger.totalRealizedProfitAmount;
+  const totalRealizedCostBasisAmount = ledger.totalRealizedCostBasisAmount;
   const totalRealizedProfitPct = totalRealizedCostBasisAmount
     ? roundCurrency((totalRealizedProfitAmount / totalRealizedCostBasisAmount) * 100)
     : 0;
@@ -583,30 +618,28 @@ export async function getMutualFundDashboard(
       );
     })
     .slice(0, 8)
-    .map((transaction) => ({
-      id: String(transaction._id),
-      schemeCode: transaction.schemeCode,
-      schemeName: transaction.schemeName,
-      transactionType: transaction.transactionType,
-      units: roundCurrency(transaction.units),
-      nav: roundCurrency(transaction.nav),
-      amount: roundCurrency(transaction.amount),
-      averageBuyNav:
-        transaction.averageBuyNav != null ? roundCurrency(transaction.averageBuyNav) : null,
-      realizedProfitAmount:
-        transaction.realizedProfitAmount != null
-          ? roundCurrency(transaction.realizedProfitAmount)
-          : null,
-      realizedProfitPct:
-        transaction.realizedCostBasisAmount != null &&
-        transaction.realizedProfitAmount != null &&
-        transaction.realizedCostBasisAmount !== 0
-          ? roundCurrency(
-              (transaction.realizedProfitAmount / transaction.realizedCostBasisAmount) * 100
-            )
-          : null,
-      date: new Date(transaction.transactionDate).toISOString(),
-    }));
+    .map((transaction) => {
+      const realized = ledger.realizedByTransactionId.get(String(transaction._id));
+
+      return {
+        id: String(transaction._id),
+        schemeCode: transaction.schemeCode,
+        schemeName: transaction.schemeName,
+        transactionType: transaction.transactionType,
+        units: roundCurrency(transaction.units),
+        nav: roundCurrency(transaction.nav),
+        amount: roundCurrency(transaction.amount),
+        averageBuyNav: realized?.averageBuyNav ?? null,
+        realizedProfitAmount: realized?.realizedProfitAmount ?? null,
+        realizedProfitPct:
+          realized && realized.realizedCostBasisAmount !== 0
+            ? roundCurrency(
+                (realized.realizedProfitAmount / realized.realizedCostBasisAmount) * 100
+              )
+            : null,
+        date: new Date(transaction.transactionDate).toISOString(),
+      };
+    });
 
   return {
     totalPortfolioValue,

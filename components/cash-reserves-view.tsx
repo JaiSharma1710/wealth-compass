@@ -248,7 +248,7 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
     <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
       <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
         <div className="grid gap-4 xl:grid-cols-[1.45fr_0.9fr_0.9fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-neutral-500">Total Cash Reserve</p>
@@ -385,8 +385,8 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
               </div>
             </div>
 
-            <div className="mt-6 h-[21rem]">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="mt-6 h-[21rem] min-h-[21rem] min-w-0">
+              <ResponsiveContainer minHeight={336} minWidth={0} width="100%" height="100%">
                 <BarChart data={trendMonths} barCategoryGap={18} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke="#e8edf4" strokeDasharray="4 4" vertical={false} />
                   <XAxis

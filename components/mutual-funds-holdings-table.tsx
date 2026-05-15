@@ -76,8 +76,10 @@ export function MutualFundsHoldingsTable({
                       holding.profitLossAmount >= 0 ? "text-emerald-600" : "text-rose-600"
                     }`}
                   >
-                    {holding.profitLossAmount >= 0 ? "+" : "-"}
-                    {formatter.format(Math.abs(holding.profitLossAmount))}
+                    <span className="whitespace-nowrap">
+                      {holding.profitLossAmount >= 0 ? "+" : "-"}
+                      {formatter.format(Math.abs(holding.profitLossAmount))}
+                    </span>
                     <p className="mt-1 text-xs font-medium text-current/80">
                       {holding.profitLossAmount >= 0 ? "+" : ""}
                       {holding.profitLossPct.toFixed(1)}%
