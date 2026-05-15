@@ -3,17 +3,19 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowDownRight, ArrowUpRight, Landmark, Plus, Wallet } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Eye, Landmark, Plus, Wallet, X } from "lucide-react";
 import { useForm, useWatch } from "react-hook-form";
 import toast from "react-hot-toast";
 
 import type {
   CashReserveDashboardData,
+  CashReserveEntrySummary,
   CashReserveEntryType,
   CashReserveRecentActivityPage,
 } from "@/lib/cash-reserves.types";
 
 type CashReservesViewProps = {
+  banks: string[];
   currencyCode: string;
   initialData: CashReserveDashboardData;
 };
@@ -21,7 +23,9 @@ type CashReservesViewProps = {
 type AddEntryValues = {
   date: string;
   amount: string;
+  bank: string;
   entryType: CashReserveEntryType;
+  note: string;
 };
 
 type ActivityQueryState = {
@@ -47,10 +51,13 @@ const MONTH_FILTER_OPTIONS = [
   { label: "Dec", value: "12" },
 ] as const;
 
-export function CashReservesView({ currencyCode, initialData }: CashReservesViewProps) {
+export function CashReservesView({ banks, currencyCode, initialData }: CashReservesViewProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [noteEntry, setNoteEntry] = useState<CashReserveEntrySummary | null>(null);
   const [isPending, startTransition] = useTransition();
+  const bankOptions = useMemo(() => Array.from(new Set(banks.filter(Boolean))), [banks]);
+  const defaultBank = bankOptions[0] || "";
   const [activityState, setActivityState] = useState<{
     activity: CashReserveRecentActivityPage;
     query: ActivityQueryState;
@@ -66,7 +73,9 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
       amount: "",
+      bank: defaultBank,
       entryType: "credit",
+      note: "",
     },
   });
 
@@ -186,7 +195,9 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
       body: JSON.stringify({
         date: values.date,
         amount: Number(values.amount),
+        bank: values.bank,
         entryType: values.entryType,
+        note: values.note,
       }),
     });
 
@@ -203,7 +214,9 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
     reset({
       date: new Date().toISOString().slice(0, 10),
       amount: "",
+      bank: defaultBank,
       entryType: "credit",
+      note: "",
     });
     setIsModalOpen(false);
     setActivityState(null);
@@ -280,6 +293,54 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
             tone="neutral"
           />
         </div>
+
+        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Money Distribution by Bank</h3>
+              <p className="mt-1 text-sm text-neutral-500">Current reserve balance split across selected banks.</p>
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-medium text-neutral-500">Total Money in Reserves</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">
+                {formatter.format(initialData.totalBalance)}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {initialData.bankDistribution.length ? (
+              initialData.bankDistribution.map((entry) => (
+                <div
+                  className="rounded-[1.25rem] border border-[#eef2f7] bg-[#fafaf8] p-4"
+                  key={entry.bank}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 truncate text-sm font-semibold text-neutral-950">{entry.bank}</p>
+                    <p
+                      className={`shrink-0 text-sm font-semibold ${
+                        entry.balance >= 0 ? "text-emerald-600" : "text-rose-600"
+                      }`}
+                    >
+                      {formatter.format(entry.balance)}
+                    </p>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#e9edf3]">
+                    <div
+                      className={entry.balance >= 0 ? "h-full rounded-full bg-[#111111]" : "h-full rounded-full bg-rose-500"}
+                      style={{ width: `${Math.min(entry.percentage, 100)}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-neutral-500">{entry.percentage.toFixed(1)}% of reserve total</p>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-[1.5rem] border border-dashed border-[#d9dfeb] bg-[#fafaf8] px-5 py-8 text-center text-sm text-neutral-500 md:col-span-2 xl:col-span-3">
+                No bank distribution yet. Add a cash reserve entry with a bank to see the split.
+              </div>
+            )}
+          </div>
+        </section>
 
         <div className="grid gap-6 xl:grid-cols-[1.05fr_1.45fr]">
           <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
@@ -505,6 +566,20 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                       <p className="mt-1 text-sm text-neutral-500">
                         {positive ? "Credit entry added to reserve" : "Debit entry recorded from reserve"}
                       </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+                        <span className="rounded-full bg-white px-2.5 py-1 font-medium text-neutral-600">
+                          {entry.bank}
+                        </span>
+                        <button
+                          className="inline-flex items-center gap-1 rounded-full border border-[#dbe2ee] bg-white px-2.5 py-1 font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={!entry.note}
+                          onClick={() => setNoteEntry(entry)}
+                          type="button"
+                        >
+                          <Eye className="size-3.5" />
+                          <span>{entry.note ? "View note" : "No note"}</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="text-right">
@@ -563,8 +638,8 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
       </div>
 
       {isModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
-          <div className="w-full max-w-md rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6">
+          <div className="max-h-[calc(100vh-3rem)] w-full max-w-md overflow-y-auto rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Add Cash Entry</h3>
@@ -596,6 +671,28 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                   })}
                 />
                 {errors.date ? <span className="text-sm text-destructive">{errors.date.message}</span> : null}
+              </label>
+
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-neutral-800">Bank</span>
+                <select
+                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5 disabled:bg-[#f7f7f5] disabled:text-neutral-400"
+                  disabled={!bankOptions.length}
+                  {...register("bank", {
+                    required: "Bank is required.",
+                  })}
+                >
+                  {bankOptions.length ? (
+                    bankOptions.map((bank) => (
+                      <option key={bank} value={bank}>
+                        {bank}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">Add banks in Settings first</option>
+                  )}
+                </select>
+                {errors.bank ? <span className="text-sm text-destructive">{errors.bank.message}</span> : null}
               </label>
 
               <label className="block space-y-2">
@@ -662,6 +759,21 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                 ) : null}
               </fieldset>
 
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-neutral-800">Note</span>
+                <textarea
+                  className="min-h-24 w-full resize-none rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 py-3 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+                  placeholder="Add a short note for this transaction"
+                  {...register("note", {
+                    maxLength: {
+                      value: 500,
+                      message: "Note must be 500 characters or fewer.",
+                    },
+                  })}
+                />
+                {errors.note ? <span className="text-sm text-destructive">{errors.note.message}</span> : null}
+              </label>
+
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   className="rounded-[1rem] border border-[#dbe2ee] px-4 py-2.5 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
@@ -675,13 +787,46 @@ export function CashReservesView({ currencyCode, initialData }: CashReservesView
                 </button>
                 <button
                   className="rounded-[1rem] bg-[#111111] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isSubmitting || isPending || !isDirty}
+                  disabled={isSubmitting || isPending || !isDirty || !bankOptions.length}
                   type="submit"
                 >
                   {isSubmitting || isPending ? "Saving..." : "Save Entry"}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {noteEntry ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setNoteEntry(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-lg rounded-[1.5rem] border border-[#e6ebf2] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+            <div className="flex items-start justify-between gap-4 border-b border-[#eef2f7] px-5 py-4">
+              <div>
+                <h3 className="text-lg font-semibold tracking-tight text-neutral-950">Transaction Note</h3>
+                <p className="mt-1 text-sm text-neutral-500">{noteEntry.bank}</p>
+              </div>
+              <button
+                aria-label="Close note"
+                className="rounded-xl p-2 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+                onClick={() => setNoteEntry(null)}
+                type="button"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-[1rem] border border-[#eef2f7] bg-[#fafaf8] p-4 text-sm leading-6 text-neutral-700">
+                {noteEntry.note}
+              </p>
+            </div>
           </div>
         </div>
       ) : null}

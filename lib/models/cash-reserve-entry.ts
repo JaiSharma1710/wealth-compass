@@ -1,4 +1,4 @@
-import { model, models, Schema, type InferSchemaType, type Model } from "mongoose";
+import { deleteModel, model, models, Schema, type InferSchemaType, type Model } from "mongoose";
 
 const cashReserveEntrySchema = new Schema(
   {
@@ -23,6 +23,18 @@ const cashReserveEntrySchema = new Schema(
       enum: ["credit", "debit"],
       required: true,
     },
+    bank: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 140,
+    },
+    note: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 500,
+    },
   },
   {
     collection: "cash-reserve-entries",
@@ -33,6 +45,20 @@ const cashReserveEntrySchema = new Schema(
 cashReserveEntrySchema.index({ userId: 1, entryDate: -1, createdAt: -1 });
 
 export type CashReserveEntryDocument = InferSchemaType<typeof cashReserveEntrySchema>;
+
+function hasCurrentCashReserveEntrySchema(existingModel: Model<CashReserveEntryDocument>) {
+  return ["bank", "note"].every((path) => existingModel.schema.path(path));
+}
+
+const existingCashReserveEntryModel =
+  models.CashReserveEntry as Model<CashReserveEntryDocument> | undefined;
+
+if (
+  existingCashReserveEntryModel &&
+  !hasCurrentCashReserveEntrySchema(existingCashReserveEntryModel)
+) {
+  deleteModel("CashReserveEntry");
+}
 
 export const CashReserveEntry =
   (models.CashReserveEntry as Model<CashReserveEntryDocument> | undefined) ||

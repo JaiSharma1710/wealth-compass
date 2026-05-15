@@ -5,6 +5,7 @@ import { Types } from "mongoose";
 import { connectToDatabase } from "@/lib/mongodb";
 import { CashReserveEntry } from "@/lib/models/cash-reserve-entry";
 import type {
+  CashReserveBankDistribution,
   CashReserveDashboardData,
   CashReserveMonthSummary,
   CashReserveRecentActivityFilters,
@@ -168,6 +169,8 @@ export async function getCashReserveRecentActivity(
       date: new Date(entry.entryDate).toISOString(),
       amount: roundCurrency(entry.amount),
       entryType: entry.entryType,
+      bank: entry.bank || "Unassigned",
+      note: entry.note || "",
     })),
     page: safePage,
     pageSize,
@@ -193,11 +196,15 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
   const monthStarts = getMonthStarts(6);
   const windowStart = monthStarts[0];
   const monthMap = new Map<string, { credits: number; debits: number; net: number }>();
+  const bankMap = new Map<string, number>();
   let openingBalance = 0;
 
   for (const entry of entries) {
     const entryDate = new Date(entry.entryDate);
     const signedAmount = entry.entryType === "credit" ? entry.amount : -entry.amount;
+    const bank = entry.bank || "Unassigned";
+
+    bankMap.set(bank, (bankMap.get(bank) || 0) + signedAmount);
 
     if (entryDate < windowStart) {
       openingBalance += signedAmount;
@@ -246,6 +253,18 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
         ? 0
         : 100
       : roundCurrency((monthOverMonthChangeAmount / Math.abs(previousMonthBalance)) * 100);
+  const distributionDenominator = Math.abs(totalBalance);
+  const bankDistribution: CashReserveBankDistribution[] = Array.from(bankMap.entries())
+    .map(([bank, balance]) => ({
+      bank,
+      balance: roundCurrency(balance),
+      percentage:
+        distributionDenominator > 0
+          ? roundCurrency((Math.abs(balance) / distributionDenominator) * 100)
+          : 0,
+    }))
+    .filter((entry) => entry.balance !== 0)
+    .sort((first, second) => Math.abs(second.balance) - Math.abs(first.balance));
 
   const recentActivity = await getCashReserveRecentActivity(userId, {
     page: 1,
@@ -256,6 +275,7 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     totalBalance,
     monthOverMonthChangePct,
     monthOverMonthChangeAmount,
+    bankDistribution,
     months,
     recentActivity,
   };

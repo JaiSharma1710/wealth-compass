@@ -14,6 +14,14 @@ export type CashReserveEntrySummary = {
   date: string;
   amount: number;
   entryType: CashReserveEntryType;
+  bank: string;
+  note: string;
+};
+
+export type CashReserveBankDistribution = {
+  bank: string;
+  balance: number;
+  percentage: number;
 };
 
 export type CashReserveRecentActivityFilters = {
@@ -37,6 +45,7 @@ export type CashReserveDashboardData = {
   totalBalance: number;
   monthOverMonthChangePct: number;
   monthOverMonthChangeAmount: number;
+  bankDistribution: CashReserveBankDistribution[];
   months: CashReserveMonthSummary[];
   recentActivity: CashReserveRecentActivityPage;
 };

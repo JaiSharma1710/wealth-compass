@@ -8,6 +8,7 @@ export default async function CashAndReservesPage() {
 
   return (
     <CashReservesView
+      banks={user.profile.banks}
       currencyCode={user.profile.currency}
       initialData={dashboard}
     />
