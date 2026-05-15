@@ -40,6 +40,7 @@ type PublicUserSource = {
       city?: string;
       postalCode?: string;
       country?: string;
+      banks?: string[];
     }
     | null;
   createdAt?: Date | null;
@@ -61,6 +62,7 @@ export type SafeUser = {
     city: string;
     postalCode: string;
     country: string;
+    banks: string[];
   };
   createdAt: string;
   lastLoginAt: string | null;
@@ -137,6 +139,9 @@ export function buildPublicUser(user: PublicUserSource): SafeUser {
       city: user.profile?.city || "",
       postalCode: user.profile?.postalCode || "",
       country: user.profile?.country || "",
+      banks: Array.isArray(user.profile?.banks)
+        ? user.profile.banks.filter((bank) => typeof bank === "string")
+        : [],
     },
     createdAt: user.createdAt?.toISOString() || new Date().toISOString(),
     lastLoginAt: user.lastLoginAt?.toISOString() || null,

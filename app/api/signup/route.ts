@@ -83,6 +83,7 @@ export async function POST(request: Request) {
       city: "",
       postalCode: "",
       country: "",
+      banks: [],
     },
   });
 

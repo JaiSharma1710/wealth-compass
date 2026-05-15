@@ -54,6 +54,10 @@ const profileSchema = new Schema(
       trim: true,
       maxlength: 80,
     },
+    banks: {
+      type: [{ type: String, trim: true, maxlength: 140 }],
+      default: [],
+    },
   },
   {
     _id: false,
@@ -124,6 +128,7 @@ function hasCurrentProfileSchema(existingModel: Model<UserDocument>) {
     "profile.city",
     "profile.postalCode",
     "profile.country",
+    "profile.banks",
   ].every((path) => existingModel.schema.path(path));
 }
 

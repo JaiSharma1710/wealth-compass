@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import banks from "@/constants/banks.json";
 import { AUTH_COOKIE_NAME, buildPublicUser, verifyAuthToken } from "@/lib/auth";
 import { findCountryOption } from "@/lib/countries";
 import { findCurrencyOption } from "@/lib/currencies";
@@ -20,10 +21,12 @@ type ProfileUpdateBody = {
   city?: string;
   postalCode?: string;
   country?: string;
+  banks?: unknown;
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const validBanks = new Set((banks as string[]).filter(Boolean));
 
 export async function PATCH(request: Request) {
   const token = request.headers.get("cookie")
@@ -53,6 +56,16 @@ export async function PATCH(request: Request) {
   const city = body?.city?.trim() || "";
   const postalCode = body?.postalCode?.trim() || "";
   const country = body?.country?.trim() || "";
+  const selectedBanks = Array.isArray(body?.banks)
+    ? Array.from(
+      new Set(
+        body.banks
+          .filter((bank): bank is string => typeof bank === "string")
+          .map((bank) => bank.trim())
+          .filter(Boolean)
+      )
+    )
+    : [];
 
   if (!fullName || !email || !username || !currency || !timezone) {
     return NextResponse.json(
@@ -92,6 +105,20 @@ export async function PATCH(request: Request) {
   if (dateOfBirth && !datePattern.test(dateOfBirth)) {
     return NextResponse.json(
       { message: "Date of birth must be a valid date." },
+      { status: 400 }
+    );
+  }
+
+  if (body?.banks !== undefined && !Array.isArray(body.banks)) {
+    return NextResponse.json(
+      { message: "Banks must be selected from the available bank list." },
+      { status: 400 }
+    );
+  }
+
+  if (selectedBanks.some((bank) => !validBanks.has(bank))) {
+    return NextResponse.json(
+      { message: "Please select valid banks from the list." },
       { status: 400 }
     );
   }
@@ -150,6 +177,7 @@ export async function PATCH(request: Request) {
       city: "",
       postalCode: "",
       country: "",
+      banks: [],
     };
   }
 
@@ -164,6 +192,7 @@ export async function PATCH(request: Request) {
   user.profile.city = city;
   user.profile.postalCode = postalCode;
   user.profile.country = resolvedCountry?.code || "";
+  user.profile.banks = selectedBanks;
 
   await user.save();
 

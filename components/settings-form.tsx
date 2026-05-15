@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, Eye, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -13,6 +13,7 @@ import {
   type UseFormRegisterReturn,
 } from "react-hook-form";
 
+import banks from "@/constants/banks.json";
 import type { SafeUser } from "@/lib/auth";
 
 type SettingsFormProps = {
@@ -29,6 +30,7 @@ type SettingsValues = {
   city: string;
   postalCode: string;
   country: string;
+  banks: string[];
   currency: string;
   timezone: string;
 };
@@ -55,6 +57,8 @@ const tabs: Array<{ id: SettingsTab; label: string }> = [
   { id: "preferences", label: "Preferences" },
   { id: "security", label: "Security" },
 ];
+const emptyBanks: string[] = [];
+const bankOptions = Array.from(new Set((banks as string[]).filter(Boolean)));
 
 export function SettingsForm({ user }: SettingsFormProps) {
   const router = useRouter();
@@ -452,12 +456,18 @@ export function SettingsForm({ user }: SettingsFormProps) {
                         type="email"
                       />
 
-                      <InputField
-                        disabled
-                        label="Password"
-                        placeholder="************"
-                        readOnly
-                        value="************"
+                      <Controller
+                        control={control}
+                        name="banks"
+                        render={({ field }) => (
+                          <BankMultiSelect
+                            label="Banks"
+                            onChange={field.onChange}
+                            options={bankOptions}
+                            placeholder="Select banks"
+                            values={field.value || []}
+                          />
+                        )}
                       />
 
                       <InputField
@@ -846,6 +856,300 @@ function SearchableOverlayCombobox({
   );
 }
 
+function BankMultiSelect({
+  label,
+  values,
+  onChange,
+  options,
+  placeholder,
+  error,
+}: {
+  label: string;
+  values?: string[];
+  onChange: (value: string[]) => void;
+  options: string[];
+  placeholder: string;
+  error?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  const [draftQuery, setDraftQuery] = useState("");
+  const [dropdownStyle, setDropdownStyle] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+  const selectedValues = values || emptyBanks;
+  const selectedSet = useMemo(() => new Set(selectedValues), [selectedValues]);
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = draftQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return options;
+    }
+
+    return options.filter((option) => option.toLowerCase().includes(normalizedQuery));
+  }, [draftQuery, options]);
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+
+      if (
+        !containerRef.current?.contains(target) &&
+        !dropdownRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open || !triggerRef.current) {
+      return;
+    }
+
+    function updateDropdownPosition() {
+      const rect = triggerRef.current?.getBoundingClientRect();
+
+      if (!rect) {
+        return;
+      }
+
+      setDropdownStyle({
+        left: rect.left,
+        top: rect.bottom + 8,
+        width: rect.width,
+        maxHeight: Math.max(220, window.innerHeight - rect.bottom - 24),
+      });
+    }
+
+    updateDropdownPosition();
+
+    window.addEventListener("resize", updateDropdownPosition);
+    window.addEventListener("scroll", updateDropdownPosition, true);
+
+    return () => {
+      window.removeEventListener("resize", updateDropdownPosition);
+      window.removeEventListener("scroll", updateDropdownPosition, true);
+    };
+  }, [open]);
+
+  function toggleBank(bank: string) {
+    if (selectedSet.has(bank)) {
+      onChange(selectedValues.filter((selectedBank) => selectedBank !== bank));
+      return;
+    }
+
+    onChange([...selectedValues, bank]);
+  }
+
+  function removeBank(bank: string) {
+    onChange(selectedValues.filter((selectedBank) => selectedBank !== bank));
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <div className="space-y-2.5">
+        <span className="block text-sm font-medium text-neutral-800">{label}</span>
+        <div
+          className="flex min-h-[2.9rem] w-full items-center rounded-[1rem] border border-[#dbe2ee] bg-white text-[0.92rem] text-neutral-900 shadow-sm transition focus-within:border-[#111111] focus-within:ring-3 focus-within:ring-black/5"
+          ref={triggerRef}
+        >
+          <button
+            aria-expanded={open}
+            aria-haspopup="listbox"
+            className="flex min-w-0 flex-1 items-center px-3.5 py-3 text-left outline-none"
+            onClick={() => {
+              setDraftQuery("");
+              setOpen((current) => !current);
+            }}
+            type="button"
+          >
+            <span className={selectedValues.length ? "block truncate" : "block truncate text-neutral-400"}>
+              {selectedValues.length
+                ? selectedValues.length === 1
+                  ? selectedValues[0]
+                  : `${selectedValues.length} banks selected`
+                : placeholder}
+            </span>
+          </button>
+          <div className="flex items-center gap-1 pr-3">
+            <button
+              aria-label="View selected banks"
+              className="rounded-lg p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-neutral-300 disabled:text-neutral-300"
+              disabled={!selectedValues.length}
+              onClick={() => {
+                setOpen(false);
+                setViewOpen(true);
+              }}
+              type="button"
+            >
+              <Eye className="size-4" />
+            </button>
+            <button
+              aria-label="Toggle bank options"
+              className="rounded-lg p-1.5 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+              onClick={() => {
+                setDraftQuery("");
+                setOpen((current) => !current);
+              }}
+              type="button"
+            >
+              <ChevronsUpDown className="size-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {open && dropdownStyle
+        ? createPortal(
+          <div
+            className="fixed z-50 rounded-[1rem] border border-[#dbe2ee] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]"
+            ref={dropdownRef}
+            style={{
+              left: dropdownStyle.left,
+              top: dropdownStyle.top,
+              width: dropdownStyle.width,
+              maxHeight: dropdownStyle.maxHeight,
+            }}
+          >
+            <input
+              autoFocus
+              className="mb-2 flex h-10 w-full rounded-xl border border-[#dbe2ee] bg-white px-3 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+              onChange={(event) => setDraftQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setOpen(false);
+                }
+              }}
+              placeholder="Search banks"
+              value={draftQuery}
+            />
+            {selectedValues.length ? (
+              <div className="mb-2 flex items-center justify-between rounded-xl bg-[#f7f7f5] px-3 py-2">
+                <span className="truncate text-xs text-neutral-500">
+                  {selectedValues.length} selected
+                </span>
+                <button
+                  className="text-xs font-medium text-neutral-700 transition hover:text-neutral-950"
+                  onClick={() => onChange([])}
+                  type="button"
+                >
+                  Clear all
+                </button>
+              </div>
+            ) : null}
+            <div
+              className="overflow-y-auto"
+              style={{ maxHeight: Math.max(140, dropdownStyle.maxHeight - 104) }}
+            >
+              {filteredOptions.length ? (
+                <div className="space-y-1">
+                  {filteredOptions.map((bank) => {
+                    const selected = selectedSet.has(bank);
+
+                    return (
+                      <button
+                        aria-selected={selected}
+                        className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-sm text-neutral-700 transition hover:bg-neutral-100 hover:text-neutral-950"
+                        key={bank}
+                        onClick={() => toggleBank(bank)}
+                        role="option"
+                        type="button"
+                      >
+                        <span>{bank}</span>
+                        {selected ? <Check className="size-4 shrink-0 text-neutral-900" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="px-3 py-2 text-sm text-neutral-500">No banks found.</p>
+              )}
+            </div>
+          </div>,
+          document.body
+        )
+        : null}
+
+      {viewOpen
+        ? createPortal(
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4 py-6"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setViewOpen(false);
+              }
+            }}
+          >
+            <div className="w-full max-w-lg rounded-[1.25rem] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.2)]">
+              <div className="flex items-center justify-between border-b border-[#eef2f7] px-5 py-4">
+                <div>
+                  <p className="text-base font-semibold text-neutral-950">Selected Banks</p>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    {selectedValues.length} {selectedValues.length === 1 ? "bank" : "banks"} selected
+                  </p>
+                </div>
+                <button
+                  aria-label="Close selected banks"
+                  className="rounded-xl p-2 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+                  onClick={() => setViewOpen(false)}
+                  type="button"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+              <div className="px-5 py-4">
+                {selectedValues.length ? (
+                  <div className="max-h-72 overflow-y-auto rounded-xl border border-[#eef2f7]">
+                    <div className="divide-y divide-[#eef2f7]">
+                    {selectedValues.map((bank, index) => (
+                      <div
+                        className="grid grid-cols-[2rem_1fr_auto] items-start gap-3 px-4 py-3 text-sm"
+                        key={bank}
+                      >
+                        <span className="text-neutral-400">{index + 1}.</span>
+                        <span className="text-neutral-800">{bank}</span>
+                        <button
+                          aria-label={`Remove ${bank}`}
+                          className="rounded-lg p-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
+                          onClick={() => removeBank(bank)}
+                          type="button"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </div>
+                    ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-[#dbe2ee] px-4 py-8 text-center text-sm text-neutral-500">
+                    No banks selected.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+        : null}
+
+      {error ? <span className="mt-2 block text-sm text-destructive">{error}</span> : null}
+    </div>
+  );
+}
+
 function CountryCombobox(props: {
   label: string;
   value: string;
@@ -898,6 +1202,7 @@ function mapUserToFormValues(user: SafeUser): SettingsValues {
     city: user.profile.city,
     postalCode: user.profile.postalCode,
     country: user.profile.country,
+    banks: user.profile.banks || [],
     currency: user.profile.currency,
     timezone: user.profile.timezone,
   };
