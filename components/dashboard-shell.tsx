@@ -74,7 +74,7 @@ export function DashboardShell({
   }, []);
 
   return (
-    <div className="min-h-svh bg-[linear-gradient(180deg,#f7f7f4_0%,#edf1ea_100%)]">
+    <div className="wc-protected min-h-svh bg-[linear-gradient(180deg,#f7f7f4_0%,#edf1ea_100%)]">
       {mobileOpen ? (
         <button
           aria-label="Close sidebar overlay"

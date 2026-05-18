@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronsUpDown, Eye, X } from "lucide-react";
+import { Check, ChevronsUpDown, Eye, Moon, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -63,6 +63,7 @@ const bankOptions = Array.from(new Set((banks as string[]).filter(Boolean)));
 export function SettingsForm({ user }: SettingsFormProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
+  const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [countries, setCountries] = useState<CountryOption[]>([]);
   const [countriesError, setCountriesError] = useState<string | null>(null);
   const [countriesLoading, setCountriesLoading] = useState(true);
@@ -107,6 +108,16 @@ export function SettingsForm({ user }: SettingsFormProps) {
     control,
     name: "country",
   });
+
+  useEffect(() => {
+    const themeSync = window.setTimeout(() => {
+      setDarkModeEnabled(document.documentElement.classList.contains("dark"));
+    }, 0);
+
+    return () => {
+      window.clearTimeout(themeSync);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -310,6 +321,12 @@ export function SettingsForm({ user }: SettingsFormProps) {
     startSecurityTransition(() => {
       router.refresh();
     });
+  }
+
+  function toggleDarkMode(enabled: boolean) {
+    setDarkModeEnabled(enabled);
+    document.documentElement.classList.toggle("dark", enabled);
+    localStorage.setItem("theme", enabled ? "dark" : "light");
   }
 
   const isBusy = isSubmitting || isPending;
@@ -551,6 +568,11 @@ export function SettingsForm({ user }: SettingsFormProps) {
 
               {activeTab === "preferences" ? (
                 <div className="grid gap-4 md:grid-cols-2">
+                  <ThemeToggleField
+                    checked={darkModeEnabled}
+                    onChange={toggleDarkMode}
+                  />
+
                   <Controller
                     control={control}
                     name="currency"
@@ -594,6 +616,44 @@ export function SettingsForm({ user }: SettingsFormProps) {
           </form>
         )}
       </div>
+    </div>
+  );
+}
+
+function ThemeToggleField({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex min-h-[5.15rem] items-center justify-between gap-4 rounded-[1.25rem] border border-[#dbe2ee] bg-white px-4 py-3 shadow-sm">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[#f7f7f5] text-neutral-700">
+          <Moon className="size-4" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-neutral-800">Dark Mode</p>
+          <p className="mt-1 text-xs text-neutral-500">Applies instantly to this browser.</p>
+        </div>
+      </div>
+      <button
+        aria-checked={checked}
+        aria-label="Toggle dark mode"
+        className={`relative h-8 w-14 shrink-0 rounded-full transition ${
+          checked ? "bg-[#111111]" : "bg-[#dbe2ee]"
+        }`}
+        onClick={() => onChange(!checked)}
+        role="switch"
+        type="button"
+      >
+        <span
+          className={`absolute top-1 size-6 rounded-full bg-white shadow-sm transition ${
+            checked ? "left-7" : "left-1"
+          }`}
+        />
+      </button>
     </div>
   );
 }
@@ -807,7 +867,7 @@ function SearchableOverlayCombobox({
       {open && dropdownStyle
         ? createPortal(
           <div
-            className="fixed z-50 overflow-y-auto rounded-[1rem] border border-[#dbe2ee] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]"
+            className="wc-portal fixed z-50 overflow-y-auto rounded-[1rem] border border-[#dbe2ee] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]"
             ref={dropdownRef}
             style={{
               left: dropdownStyle.left,
@@ -1015,7 +1075,7 @@ function BankMultiSelect({
       {open && dropdownStyle
         ? createPortal(
           <div
-            className="fixed z-50 rounded-[1rem] border border-[#dbe2ee] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]"
+            className="wc-portal fixed z-50 rounded-[1rem] border border-[#dbe2ee] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]"
             ref={dropdownRef}
             style={{
               left: dropdownStyle.left,
@@ -1086,7 +1146,7 @@ function BankMultiSelect({
       {viewOpen
         ? createPortal(
           <div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4 py-6"
+            className="wc-portal fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4 py-6"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) {
                 setViewOpen(false);

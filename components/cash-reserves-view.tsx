@@ -388,16 +388,16 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
             <div className="mt-6 h-[21rem] min-h-[21rem] min-w-0">
               <ResponsiveContainer minHeight={336} minWidth={0} width="100%" height="100%">
                 <BarChart data={trendMonths} barCategoryGap={18} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke="#e8edf4" strokeDasharray="4 4" vertical={false} />
+                  <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 4" vertical={false} />
                   <XAxis
                     axisLine={false}
                     dataKey="label"
-                    tick={{ fill: "#8a95a5", fontSize: 12 }}
+                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
                     tickLine={false}
                   />
                   <YAxis
                     axisLine={false}
-                    tick={{ fill: "#8a95a5", fontSize: 12 }}
+                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
                     domain={[-trendAxisExtent, trendAxisExtent]}
                     tickFormatter={(value) => compactCurrency(Math.abs(Number(value) || 0), formatter)}
                     tickLine={false}
@@ -405,15 +405,17 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
                   />
                   <Tooltip
                     contentStyle={{
-                      border: "1px solid #e6ebf2",
+                      backgroundColor: "var(--wc-tooltip-bg)",
+                      border: "1px solid var(--wc-tooltip-border)",
                       borderRadius: "16px",
                       boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
+                      color: "var(--wc-tooltip-text)",
                     }}
                     formatter={(value, name) => [
                       formatter.format(Math.abs(Number(value) || 0)),
                       name === "credits" ? "Credit" : "Debit",
                     ]}
-                    labelStyle={{ color: "#111111", fontWeight: 600 }}
+                    labelStyle={{ color: "var(--wc-tooltip-text)", fontWeight: 600 }}
                   />
                   <Bar dataKey="credits" fill="#16a34a" name="credits" radius={[8, 8, 0, 0]} />
                   <Bar dataKey="debits" fill="#dc2626" name="debits" radius={[8, 8, 0, 0]} />

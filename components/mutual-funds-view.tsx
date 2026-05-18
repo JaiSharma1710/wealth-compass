@@ -433,31 +433,33 @@ export function MutualFundsView({
                       <stop offset="95%" stopColor="#16a34a" stopOpacity={0.01} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="#e8edf4" strokeDasharray="4 4" vertical={false} />
+                  <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 4" vertical={false} />
                   <XAxis
                     axisLine={false}
                     dataKey="label"
-                    tick={{ fill: "#8a95a5", fontSize: 12 }}
+                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
                     tickLine={false}
                   />
                   <YAxis
                     axisLine={false}
-                    tick={{ fill: "#8a95a5", fontSize: 12 }}
+                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
                     tickFormatter={(value) => compactCurrency(Number(value) || 0, formatter)}
                     tickLine={false}
                     width={74}
                   />
                   <Tooltip
                     contentStyle={{
-                      border: "1px solid #e6ebf2",
+                      backgroundColor: "var(--wc-tooltip-bg)",
+                      border: "1px solid var(--wc-tooltip-border)",
                       borderRadius: "16px",
                       boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
+                      color: "var(--wc-tooltip-text)",
                     }}
                     formatter={(value, name) => [
                       formatter.format(Number(value) || 0),
                       name === "totalValue" ? "Portfolio Value" : "Invested Capital",
                     ]}
-                    labelStyle={{ color: "#111111", fontWeight: 600 }}
+                    labelStyle={{ color: "var(--wc-tooltip-text)", fontWeight: 600 }}
                   />
                   <Area
                     dataKey="totalInvested"
@@ -598,9 +600,11 @@ export function MutualFundsView({
                             />
                           )}
                           contentStyle={{
-                            border: "1px solid #e6ebf2",
+                            backgroundColor: "var(--wc-tooltip-bg)",
+                            border: "1px solid var(--wc-tooltip-border)",
                             borderRadius: "16px",
                             boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
+                            color: "var(--wc-tooltip-text)",
                           }}
                           cursor={false}
                           wrapperStyle={{ zIndex: 20 }}
@@ -722,19 +726,19 @@ export function MutualFundsView({
                           margin={{ top: 12, right: 12, left: 0, bottom: 0 }}
                         >
                           <CartesianGrid
-                            stroke="#e8edf4"
+                            stroke="var(--wc-chart-grid)"
                             strokeDasharray="4 4"
                             vertical={false}
                           />
                           <XAxis
                             axisLine={false}
                             dataKey="label"
-                            tick={{ fill: "#8a95a5", fontSize: 12 }}
+                            tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
                             tickLine={false}
                           />
                           <YAxis
                             axisLine={false}
-                            tick={{ fill: "#8a95a5", fontSize: 12 }}
+                            tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
                             tickFormatter={(value) => compactCurrency(Number(value) || 0, formatter)}
                             tickLine={false}
                             width={72}
