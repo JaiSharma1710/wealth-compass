@@ -10,6 +10,7 @@ import type {
   MutualFundMonthSummary,
   MutualFundNavHistory,
   MutualFundNavHistoryPoint,
+  MutualFundOptionSummary,
   MutualFundTransactionSummary,
   MutualFundTransactionType,
 } from "@/lib/mutual-funds.types";
@@ -329,6 +330,46 @@ async function loadTransactions(userId: string) {
     .lean()) as TransactionRecord[];
 }
 
+function buildPreviousFundOptions(
+  transactions: TransactionRecord[]
+): MutualFundOptionSummary[] {
+  const fundBySchemeCode = new Map<
+    number,
+    MutualFundOptionSummary & { hasBuy: boolean; lastTransactionTime: number }
+  >();
+
+  for (const transaction of transactions) {
+    const transactionTime = Math.max(
+      new Date(transaction.transactionDate).getTime(),
+      transaction.createdAt ? new Date(transaction.createdAt).getTime() : 0
+    );
+    const existing = fundBySchemeCode.get(transaction.schemeCode);
+
+    if (!existing || transactionTime >= existing.lastTransactionTime) {
+      fundBySchemeCode.set(transaction.schemeCode, {
+        schemeCode: transaction.schemeCode,
+        schemeName: transaction.schemeName,
+        hasBuy: existing?.hasBuy || transaction.transactionType === "buy",
+        lastTransactionTime: transactionTime,
+      });
+      continue;
+    }
+
+    if (transaction.transactionType === "buy") {
+      existing.hasBuy = true;
+    }
+  }
+
+  return [...fundBySchemeCode.values()]
+    .filter((fund) => fund.hasBuy)
+    .sort((left, right) => {
+      const byRecency = right.lastTransactionTime - left.lastTransactionTime;
+
+      return byRecency || left.schemeName.localeCompare(right.schemeName);
+    })
+    .map(({ schemeCode, schemeName }) => ({ schemeCode, schemeName }));
+}
+
 async function ensureSnapshotsUpToDate(userId: string, transactions?: TransactionRecord[]) {
   const allTransactions = transactions || (await loadTransactions(userId));
 
@@ -580,6 +621,7 @@ export async function getMutualFundDashboard(
   const ledger = buildLedgerFromTransactions(transactions);
   const liveHoldings = await applyLiveCurrentNav(ledger.holdings);
   const holdings = mapHoldingsToSummary(liveHoldings);
+  const previousFunds = buildPreviousFundOptions(transactions);
   const totalPortfolioValue = roundCurrency(
     holdings.reduce((sum, holding) => sum + holding.currentValue, 0)
   );
@@ -654,6 +696,7 @@ export async function getMutualFundDashboard(
     distribution: holdings,
     topHoldings: holdings.slice(0, 5),
     holdings,
+    previousFunds,
     recentTransactions,
   };
 }

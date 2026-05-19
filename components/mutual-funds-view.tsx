@@ -16,7 +16,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { TooltipContentProps } from "recharts";
+import type { PieLabelRenderProps, TooltipContentProps } from "recharts";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -34,6 +34,7 @@ import { MutualFundsHoldingsTable } from "@/components/mutual-funds-holdings-tab
 import type {
   MutualFundDashboardData,
   MutualFundNavHistory,
+  MutualFundOptionSummary,
   MutualFundTransactionType,
 } from "@/lib/mutual-funds.types";
 
@@ -42,12 +43,10 @@ type MutualFundsViewProps = {
   initialData: MutualFundDashboardData;
 };
 
-type MfSchemeOption = {
-  schemeCode: number;
-  schemeName: string;
-};
+type MfSchemeOption = MutualFundOptionSummary;
 
 type BuyMfValues = {
+  previousSchemeCode: string;
   units: string;
   nav: string;
   date: string;
@@ -61,13 +60,49 @@ type SellMfValues = {
 };
 
 const DISTRIBUTION_COLORS = [
-  "#111111",
   "#3b82f6",
-  "#16a34a",
+  "#10b981",
+  "#f59e0b",
   "#f97316",
-  "#dc2626",
   "#8b5cf6",
+  "#ef4444",
+  "#14b8a6",
+  "#64748b",
 ];
+
+const RADIAN = Math.PI / 180;
+
+function renderDistributionLabel({
+  cx,
+  cy,
+  midAngle,
+  innerRadius,
+  outerRadius,
+  percent,
+}: PieLabelRenderProps) {
+  if (!percent || percent < 0.035 || typeof midAngle !== "number") {
+    return null;
+  }
+
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.58;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  const label = `${(percent * 100).toFixed(percent >= 0.1 ? 0 : 1)}%`;
+
+  return (
+    <text
+      dominantBaseline="central"
+      fill="#ffffff"
+      fontSize={14}
+      fontWeight={700}
+      textAnchor="middle"
+      x={x}
+      y={y}
+    >
+      {label}
+    </text>
+  );
+}
 
 export function MutualFundsView({
   currencyCode,
@@ -117,9 +152,12 @@ export function MutualFundsView({
     register: registerBuy,
     handleSubmit: handleBuySubmit,
     reset: resetBuy,
+    setValue: setBuyValue,
+    clearErrors: clearBuyErrors,
     formState: { errors: buyErrors, isSubmitting: isBuySubmitting },
   } = useForm<BuyMfValues>({
     defaultValues: {
+      previousSchemeCode: "",
       units: "",
       nav: "",
       date: new Date().toISOString().slice(0, 10),
@@ -229,6 +267,7 @@ export function MutualFundsView({
     setFundSearchOptions([]);
     setSelectedBuyFund([]);
     resetBuy({
+      previousSchemeCode: "",
       units: "",
       nav: "",
       date: new Date().toISOString().slice(0, 10),
@@ -279,10 +318,15 @@ export function MutualFundsView({
   }
 
   async function onBuy(values: BuyMfValues) {
-    const fund = selectedBuyFund[0];
+    const previousFund = values.previousSchemeCode
+      ? initialData.previousFunds.find(
+          (item) => String(item.schemeCode) === values.previousSchemeCode
+        )
+      : null;
+    const fund = previousFund || selectedBuyFund[0];
 
     if (!fund) {
-      toast.error("Please select a mutual fund first.");
+      toast.error("Please select a previous fund or search for a mutual fund.");
       return;
     }
 
@@ -329,6 +373,13 @@ export function MutualFundsView({
       );
     }
   }
+
+  const previousBuyFundField = registerBuy("previousSchemeCode", {
+    validate: (value) =>
+      value || selectedBuyFund.length
+        ? true
+        : "Select a previous fund or search for a mutual fund.",
+  });
 
   return (
     <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
@@ -564,88 +615,61 @@ export function MutualFundsView({
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
             <div className="rounded-[1.75rem] border border-[#eef2f7] bg-[#fafaf8] p-5">
-              <div className="mb-4">
-                <h4 className="text-base font-semibold text-neutral-950">Allocation Split</h4>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Current value spread across your active mutual fund holdings.
-                </p>
-              </div>
-
-              {distributionData.length ? (
-                <>
-                  <div className="relative h-[18rem]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={distributionData}
-                          dataKey="currentValue"
-                          nameKey="schemeName"
-                          cornerRadius={distributionData.length > 2 ? 6 : 0}
-                          innerRadius={72}
-                          outerRadius={108}
-                          paddingAngle={distributionData.length > 2 ? 2 : 0}
-                          startAngle={90}
-                          endAngle={-270}
-                          stroke="none"
-                        >
-                          {distributionData.map((entry) => (
-                            <Cell key={entry.schemeCode} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          content={(props) => (
-                            <DistributionTooltip
-                              {...(props as TooltipContentProps)}
-                              currencyFormatter={formatter}
-                            />
-                          )}
-                          contentStyle={{
-                            backgroundColor: "var(--wc-tooltip-bg)",
-                            border: "1px solid var(--wc-tooltip-border)",
-                            borderRadius: "16px",
-                            boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
-                            color: "var(--wc-tooltip-text)",
-                          }}
-                          cursor={false}
-                          wrapperStyle={{ zIndex: 20 }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                      <div className="rounded-full bg-white/92 px-5 py-4 text-center shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">
-                          Portfolio
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold tracking-tight text-neutral-950">
-                          {formatter.format(initialData.totalPortfolioValue)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h4 className="text-base font-semibold text-neutral-950">Allocation Split</h4>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Current value spread across your active mutual fund holdings.
+                  </p>
+                </div>
+                {distributionData.length ? (
+                  <div className="flex max-w-full flex-wrap gap-x-3 gap-y-2 sm:max-w-[18rem] sm:justify-end">
                     {distributionData.map((entry) => (
                       <div
                         key={entry.schemeCode}
-                        className="flex items-center justify-between gap-3 rounded-[1rem] border border-white/80 bg-white px-3 py-2.5 shadow-sm"
+                        className="flex max-w-[12rem] items-center gap-2"
                       >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span
-                            className="size-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: entry.color }}
-                          />
-                          <span className="truncate text-sm text-neutral-700">
-                            {entry.schemeName}
-                          </span>
-                        </div>
-                        <span className="shrink-0 text-xs font-semibold text-neutral-500">
-                          {entry.allocationPct.toFixed(1)}%
+                        <span
+                          className="size-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: entry.color }}
+                        />
+                        <span className="truncate text-xs font-medium text-neutral-600">
+                          {entry.schemeName}
                         </span>
                       </div>
                     ))}
                   </div>
-                </>
+                ) : null}
+              </div>
+
+              {distributionData.length ? (
+                <div className="h-[22rem] rounded-[1.25rem] bg-white p-3 shadow-sm">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        cx="50%"
+                        cy="50%"
+                        data={distributionData}
+                        dataKey="currentValue"
+                        endAngle={-270}
+                        innerRadius={0}
+                        isAnimationActive
+                        label={renderDistributionLabel}
+                        labelLine={false}
+                        nameKey="schemeName"
+                        outerRadius="86%"
+                        paddingAngle={distributionData.length > 1 ? 1 : 0}
+                        startAngle={90}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                      >
+                        {distributionData.map((entry) => (
+                          <Cell key={entry.schemeCode} fill={entry.color} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
               ) : (
                 <div className="flex h-[18rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white text-sm text-neutral-500">
                   No mutual fund distribution yet.
@@ -873,7 +897,50 @@ export function MutualFundsView({
         >
           <form className="mt-6 space-y-5" onSubmit={handleBuySubmit(onBuy)}>
             <div className="space-y-2">
-              <span className="text-sm font-medium text-neutral-800">Mutual Fund Name</span>
+              <span className="text-sm font-medium text-neutral-800">Mutual Fund</span>
+              {initialData.previousFunds.length ? (
+                <label className="block space-y-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">
+                    Previous Fund
+                  </span>
+                  <select
+                    className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
+                    {...previousBuyFundField}
+                    onChange={(event) => {
+                      void previousBuyFundField.onChange(event);
+
+                      if (!event.target.value) {
+                        return;
+                      }
+
+                      setSelectedBuyFund([]);
+                      setFundSearchOptions([]);
+                      clearBuyErrors("previousSchemeCode");
+
+                      const matchingHolding = initialData.holdings.find(
+                        (holding) => String(holding.schemeCode) === event.target.value
+                      );
+
+                      if (matchingHolding) {
+                        setBuyValue("nav", String(matchingHolding.currentNav), {
+                          shouldDirty: true,
+                          shouldValidate: true,
+                        });
+                      }
+                    }}
+                  >
+                    <option value="">Select from previous funds</option>
+                    {initialData.previousFunds.map((fund) => (
+                      <option key={fund.schemeCode} value={fund.schemeCode}>
+                        {fund.schemeName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              <span className="block text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">
+                Search Fund
+              </span>
               <AsyncTypeahead
                 clearButton
                 delay={250}
@@ -888,6 +955,14 @@ export function MutualFundsView({
                 minLength={2}
                 onChange={(selected) => {
                   setSelectedBuyFund(selected as MfSchemeOption[]);
+
+                  if (selected.length) {
+                    setBuyValue("previousSchemeCode", "", {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                    clearBuyErrors("previousSchemeCode");
+                  }
                 }}
                 onSearch={handleFundSearch}
                 options={fundSearchOptions}
@@ -910,9 +985,14 @@ export function MutualFundsView({
                 selected={selectedBuyFund}
                 useCache={false}
               />
+              {buyErrors.previousSchemeCode ? (
+                <span className="text-sm text-destructive">
+                  {buyErrors.previousSchemeCode.message}
+                </span>
+              ) : null}
               {!selectedBuyFund.length ? (
                 <p className="text-xs text-neutral-500">
-                  Start typing at least 2 characters to search.
+                  Start typing at least 2 characters to search for a different fund.
                 </p>
               ) : null}
             </div>
@@ -1221,50 +1301,6 @@ function compactCurrency(value: number, formatter: Intl.NumberFormat) {
   const currency = parts.find((part) => part.type === "currency")?.value || "";
 
   return `${currency}${Math.round(value)}`;
-}
-
-function DistributionTooltip({
-  active,
-  payload,
-  currencyFormatter,
-}: TooltipContentProps & {
-  currencyFormatter: Intl.NumberFormat;
-}) {
-  if (!active || !payload?.length) {
-    return null;
-  }
-
-  const entry = payload[0]?.payload as
-    | {
-        schemeName?: string;
-        currentValue?: number;
-        allocationPct?: number;
-      }
-    | undefined;
-
-  if (!entry) {
-    return null;
-  }
-
-  return (
-    <div className="max-w-[16rem] rounded-2xl border border-[#e6ebf2] bg-white px-3.5 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.12)]">
-      <p className="text-sm font-semibold leading-5 text-neutral-950">
-        {entry.schemeName || "Mutual Fund"}
-      </p>
-      <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-        <span className="text-neutral-500">Value</span>
-        <span className="font-semibold text-neutral-950">
-          {currencyFormatter.format(entry.currentValue || 0)}
-        </span>
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-3 text-sm">
-        <span className="text-neutral-500">Allocation</span>
-        <span className="font-semibold text-neutral-950">
-          {(entry.allocationPct || 0).toFixed(1)}%
-        </span>
-      </div>
-    </div>
-  );
 }
 
 function FundMovementTooltip({

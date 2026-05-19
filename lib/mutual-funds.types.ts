@@ -36,6 +36,11 @@ export type MutualFundHoldingSummary = {
   allocationPct: number;
 };
 
+export type MutualFundOptionSummary = {
+  schemeCode: number;
+  schemeName: string;
+};
+
 export type MutualFundTransactionSummary = {
   id: string;
   schemeCode: number;
@@ -63,5 +68,6 @@ export type MutualFundDashboardData = {
   distribution: MutualFundHoldingSummary[];
   topHoldings: MutualFundHoldingSummary[];
   holdings: MutualFundHoldingSummary[];
+  previousFunds: MutualFundOptionSummary[];
   recentTransactions: MutualFundTransactionSummary[];
 };
