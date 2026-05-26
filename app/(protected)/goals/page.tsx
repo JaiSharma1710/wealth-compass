@@ -1,5 +1,10 @@
-import { SectionPage } from "@/components/section-page";
+import { GoalsView } from "@/components/goals-view";
+import { requireCurrentUser } from "@/lib/auth";
+import { getGoalsPageData } from "@/lib/goals";
 
-export default function GoalsPage() {
-  return <SectionPage title="Goals" />;
+export default async function GoalsPage() {
+  const user = await requireCurrentUser();
+  const data = await getGoalsPageData(user);
+
+  return <GoalsView currencyCode={user.profile.currency} initialData={data} />;
 }
