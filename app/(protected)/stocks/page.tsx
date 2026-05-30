@@ -1,5 +1,15 @@
-import { SectionPage } from "@/components/section-page";
+import { StocksView } from "@/components/stocks-view";
+import { requireCurrentUser } from "@/lib/auth";
+import { getStockDashboard } from "@/lib/stocks";
 
-export default function StocksPage() {
-  return <SectionPage title="Stocks" />;
+export default async function StocksPage() {
+  const user = await requireCurrentUser();
+  const dashboard = await getStockDashboard(user.id);
+
+  return (
+    <StocksView
+      currencyCode={user.profile.currency}
+      initialData={dashboard}
+    />
+  );
 }
