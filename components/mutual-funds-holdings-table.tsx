@@ -25,15 +25,15 @@ export function MutualFundsHoldingsTable({
   const rows = typeof limit === "number" ? holdings.slice(0, limit) : holdings;
 
   return (
-    <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
+    <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-xl font-semibold tracking-tight text-neutral-950">{title}</h3>
           <p className="mt-1 text-sm text-neutral-500">{subtitle}</p>
         </div>
         {showViewAll ? (
           <Link
-            className="inline-flex items-center rounded-[1rem] border border-[#dbe2ee] px-4 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50"
+            className="inline-flex w-full items-center justify-center rounded-[1rem] border border-[#dbe2ee] px-4 py-2 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 sm:w-auto"
             href="/mutual-funds/holdings"
           >
             View All
@@ -41,8 +41,8 @@ export function MutualFundsHoldingsTable({
         ) : null}
       </div>
 
-      <div className="mt-5 overflow-hidden rounded-[1.5rem] border border-[#eef2f7]">
-        <table className="min-w-full text-left">
+      <div className="mt-5 overflow-x-auto rounded-[1.5rem] border border-[#eef2f7]">
+        <table className="min-w-[760px] text-left">
           <thead className="bg-[#fafaf8] text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">
             <tr>
               <th className="px-4 py-3">Fund</th>
@@ -59,7 +59,7 @@ export function MutualFundsHoldingsTable({
               rows.map((holding) => (
                 <tr key={holding.schemeCode} className="align-top text-sm text-neutral-700">
                   <td className="px-4 py-3">
-                    <p className="font-medium text-neutral-950">{holding.schemeName}</p>
+                    <p className="break-words font-medium text-neutral-950">{holding.schemeName}</p>
                     <p className="mt-1 text-xs text-neutral-500">
                       Allocation {holding.allocationPct.toFixed(1)}%
                     </p>

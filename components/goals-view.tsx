@@ -430,7 +430,7 @@ function TopStat({
         <p className="text-sm font-medium text-neutral-500">{label}</p>
         <Icon className="size-4 text-neutral-500" />
       </div>
-      <p className="mt-4 text-3xl font-semibold tracking-tight text-neutral-950">{value}</p>
+      <p className="mt-4 text-2xl font-semibold tracking-tight text-neutral-950 sm:text-3xl">{value}</p>
     </div>
   );
 }
@@ -469,11 +469,11 @@ function GoalCard({
       : "bg-[#fff4e8] text-[#c2410c]";
 
   return (
-    <article className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+    <article className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-2xl font-semibold tracking-tight text-neutral-950">
+            <h3 className="text-xl font-semibold tracking-tight text-neutral-950 sm:text-2xl">
               {goal.name}
             </h3>
             <span className={`rounded-full px-3 py-1 text-xs font-semibold ${toneClasses}`}>
@@ -501,16 +501,16 @@ function GoalCard({
           </div>
 
           <div className="mt-5">
-            <div className="flex items-end justify-between gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-neutral-500">Funded by linked asset</p>
-                <p className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
+                <p className="mt-2 break-words text-2xl font-semibold tracking-tight text-neutral-950 sm:text-3xl">
                   {formatter.format(goal.currentValue)}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="sm:text-right">
                 <p className="text-sm font-medium text-neutral-500">Target</p>
-                <p className="mt-2 text-xl font-semibold text-neutral-950">
+                <p className="mt-2 break-words text-lg font-semibold text-neutral-950 sm:text-xl">
                   {formatter.format(goal.targetAmount)}
                 </p>
               </div>
@@ -560,9 +560,9 @@ function GoalCard({
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 lg:pt-1">
           <button
-            className="inline-flex h-11 items-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-600 transition hover:border-[#111111] hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-600 transition hover:border-[#111111] hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
             disabled={isDeleting}
             onClick={onDelete}
             type="button"

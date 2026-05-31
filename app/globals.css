@@ -139,6 +139,12 @@
     }
 }
 
+@media (max-width: 640px) {
+  html {
+    font-size: 15px;
+  }
+}
+
 @keyframes rbt-spin {
   to {
     transform: rotate(360deg);

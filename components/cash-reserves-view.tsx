@@ -55,6 +55,7 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [noteEntry, setNoteEntry] = useState<CashReserveEntrySummary | null>(null);
+  const [isCompactTrendViewport, setIsCompactTrendViewport] = useState(false);
   const [isPending, startTransition] = useTransition();
   const bankOptions = useMemo(() => Array.from(new Set(banks.filter(Boolean))), [banks]);
   const defaultBank = bankOptions[0] || "";
@@ -89,13 +90,17 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
       })),
     [initialData.months]
   );
+  const visibleTrendMonths = useMemo(
+    () => (isCompactTrendViewport ? trendMonths.slice(-4) : trendMonths),
+    [isCompactTrendViewport, trendMonths]
+  );
   const trendAxisExtent = useMemo(() => {
-    const maxMovement = initialData.months.reduce((max, month) => {
-      return Math.max(max, month.credits, month.debits);
+    const maxMovement = visibleTrendMonths.reduce((max, month) => {
+      return Math.max(max, month.credits, Math.abs(month.debits));
     }, 0);
 
     return maxMovement > 0 ? maxMovement : 1;
-  }, [initialData.months]);
+  }, [visibleTrendMonths]);
   const selectedEntryType = useWatch({
     control,
     name: "entryType",
@@ -113,6 +118,21 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
   );
   const activityRangeStart = activity.totalCount ? (activity.page - 1) * activity.pageSize + 1 : 0;
   const activityRangeEnd = activity.totalCount ? activityRangeStart + activity.entries.length - 1 : 0;
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 640px)");
+
+    const updateViewport = () => {
+      setIsCompactTrendViewport(mediaQuery.matches);
+    };
+
+    updateViewport();
+    mediaQuery.addEventListener("change", updateViewport);
+
+    return () => {
+      mediaQuery.removeEventListener("change", updateViewport);
+    };
+  }, []);
 
   useEffect(() => {
     if (!hasActivityInteraction) {
@@ -343,7 +363,7 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
         </section>
 
         <div className="grid gap-6 xl:grid-cols-[1.05fr_1.45fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Monthly Snapshot</h3>
@@ -351,8 +371,8 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
               </div>
             </div>
 
-            <div className="mt-5 overflow-hidden rounded-[1.5rem] border border-[#eef2f7]">
-              <table className="min-w-full text-left">
+            <div className="mt-5 overflow-x-auto rounded-[1.5rem] border border-[#eef2f7]">
+              <table className="min-w-[32rem] text-left">
                 <thead className="bg-[#fafaf8] text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">
                   <tr>
                     <th className="px-4 py-3">Month</th>
@@ -377,17 +397,20 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
             </div>
           </section>
 
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Reserve Trend</h3>
-                <p className="mt-1 text-sm text-neutral-500">Monthly credit and debit totals for the last 6 months.</p>
+                <p className="mt-1 text-sm text-neutral-500">
+                  Monthly credit and debit totals for the last {isCompactTrendViewport ? 4 : 6} months.
+                </p>
               </div>
             </div>
 
-            <div className="mt-6 h-[21rem] min-h-[21rem] min-w-0">
-              <ResponsiveContainer minHeight={336} minWidth={0} width="100%" height="100%">
-                <BarChart data={trendMonths} barCategoryGap={18} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
+            <div className="mt-6">
+              <div className="h-[18rem] min-h-[18rem] min-w-0 sm:h-[21rem] sm:min-h-[21rem]">
+                <ResponsiveContainer minHeight={288} minWidth={0} width="100%" height="100%">
+                  <BarChart data={visibleTrendMonths} barCategoryGap={18} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
                   <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 4" vertical={false} />
                   <XAxis
                     axisLine={false}
@@ -419,8 +442,9 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
                   />
                   <Bar dataKey="credits" fill="#16a34a" name="credits" radius={[8, 8, 0, 0]} />
                   <Bar dataKey="debits" fill="#dc2626" name="debits" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </section>
         </div>

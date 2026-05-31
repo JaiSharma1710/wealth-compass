@@ -916,8 +916,8 @@ export function MutualFundsView({
         />
 
         <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
               <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
                 Recent Transactions
               </h3>
@@ -926,7 +926,7 @@ export function MutualFundsView({
               </p>
             </div>
             {initialData.recentTransactions.length ? (
-              <p className="text-sm font-medium text-neutral-500">
+              <p className="text-sm font-medium text-neutral-500 sm:text-right">
                 Showing {(currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE + 1}-
                 {Math.min(
                   currentTransactionsPage * TRANSACTIONS_PAGE_SIZE,
@@ -945,10 +945,10 @@ export function MutualFundsView({
                 return (
                   <div
                     key={transaction.id}
-                    className="flex items-center justify-between rounded-[1.4rem] border border-[#eef2f7] bg-[#fafaf8] px-4 py-4"
+                    className="flex flex-col gap-3 rounded-[1.4rem] border border-[#eef2f7] bg-[#fafaf8] px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-neutral-950">
+                      <p className="break-words text-sm font-semibold leading-6 text-neutral-950 sm:truncate sm:text-base">
                         {transaction.schemeName}
                       </p>
                       <p className="mt-1 text-sm text-neutral-500">
@@ -961,7 +961,7 @@ export function MutualFundsView({
                       </p>
                     </div>
 
-                    <div className="text-right">
+                    <div className="min-w-0 sm:text-right">
                       <p
                         className={`text-base font-semibold ${
                           positive ? "text-emerald-600" : "text-rose-600"

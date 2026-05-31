@@ -25,15 +25,15 @@ export function StocksHoldingsTable({
   const rows = typeof limit === "number" ? holdings.slice(0, limit) : holdings;
 
   return (
-    <section className="rounded-[28px] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
-      <div className="flex items-center justify-between gap-4">
+    <section className="min-w-0 rounded-[28px] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-xl font-semibold tracking-tight text-[#10203a]">{title}</h3>
           <p className="mt-1 text-sm text-[#5f6f89]">{subtitle}</p>
         </div>
         {showViewAll ? (
           <Link
-            className="inline-flex items-center rounded-2xl border border-[#d6e0ef] bg-white px-4 py-2 text-sm font-semibold text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff]"
+            className="inline-flex w-full items-center justify-center rounded-2xl border border-[#d6e0ef] bg-white px-4 py-2 text-sm font-semibold text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] sm:w-auto"
             href="/stocks/holdings"
           >
             View All
@@ -42,8 +42,8 @@ export function StocksHoldingsTable({
       </div>
 
       {rows.length ? (
-        <div className="mt-5 overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-y-3">
+        <div className="mt-5 overflow-x-auto pb-1">
+          <table className="min-w-[760px] border-separate border-spacing-y-3">
             <thead>
               <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-[#7c8aa5]">
                 <th className="px-3">Stock</th>
@@ -64,12 +64,12 @@ export function StocksHoldingsTable({
                   <td className="rounded-l-2xl px-3 py-3">
                     <div className="flex flex-col gap-1">
                       <Link
-                        className="font-semibold text-[#173d7a] hover:text-[#0f2d5c]"
+                        className="break-words font-semibold text-[#173d7a] hover:text-[#0f2d5c]"
                         href={`/stocks/${encodeURIComponent(holding.symbol)}`}
                       >
                         {displaySymbol(holding.symbol, holding.shortName)}
                       </Link>
-                      <span className="text-xs text-[#6c7a93]">{holding.companyName}</span>
+                      <span className="break-words text-xs text-[#6c7a93]">{holding.companyName}</span>
                       {holding.isStale ? (
                         <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#b27712]">
                           Stale quote
