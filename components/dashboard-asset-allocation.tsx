@@ -33,29 +33,29 @@ export function DashboardAssetAllocation({
   const totalWorth = allocation.reduce((sum, entry) => sum + entry.value, 0);
 
   return (
-    <section className="overflow-hidden rounded-[32px] border border-[#dce4f0] bg-[radial-gradient(circle_at_top,#f8fbff_0%,#ffffff_44%,#f9fbff_100%)] p-6 shadow-[0_24px_70px_rgba(37,99,235,0.08)]">
-      <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <section className="overflow-hidden rounded-[32px] border border-[#dce4f0] bg-[radial-gradient(circle_at_top,#f8fbff_0%,#ffffff_44%,#f9fbff_100%)] p-5 shadow-[0_24px_70px_rgba(37,99,235,0.08)]">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-[1.75rem] font-semibold tracking-tight text-[#132842]">Portfolio Allocation</h2>
-          <p className="mt-2 text-base text-[#6d7d97]">See how your current worth is distributed.</p>
+          <h2 className="text-[1.45rem] font-semibold tracking-tight text-[#132842]">Portfolio Allocation</h2>
+          <p className="mt-1.5 text-sm text-[#6d7d97]">See how your current worth is distributed.</p>
         </div>
-        <div className="inline-flex items-center gap-2 rounded-full border border-[#d8e1ef] bg-white/90 px-4 py-2 text-sm font-medium text-[#314869] shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+        <div className="inline-flex items-center gap-2 rounded-full border border-[#d8e1ef] bg-white/90 px-3.5 py-2 text-sm font-medium text-[#314869] shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
           <Layers3 className="h-4 w-4" />
           {allocation.length} asset classes
         </div>
       </div>
       {allocation.length ? (
-        <div className="grid gap-8 lg:grid-cols-[1.1fr_1.25fr]">
-          <div className="relative flex min-h-[360px] items-center justify-center">
-            <div className="absolute inset-x-6 top-6 h-28 rounded-full bg-[radial-gradient(circle,#eff6ff_0%,rgba(239,246,255,0)_72%)] blur-3xl" />
-            <div className="relative h-[320px] w-full max-w-[380px]">
+        <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="relative flex items-center justify-center rounded-[28px] border border-[#e6edf7] bg-white/70 px-4 py-5">
+            <div className="absolute inset-x-6 top-5 h-24 rounded-full bg-[radial-gradient(circle,#eff6ff_0%,rgba(239,246,255,0)_72%)] blur-3xl" />
+            <div className="relative h-[260px] w-full max-w-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={allocation}
                     dataKey="value"
-                    innerRadius={96}
-                    outerRadius={132}
+                    innerRadius={76}
+                    outerRadius={108}
                     paddingAngle={2.4}
                     cornerRadius={8}
                     stroke="#ffffff"
@@ -85,12 +85,12 @@ export function DashboardAssetAllocation({
                 </PieChart>
               </ResponsiveContainer>
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="z-10 flex h-[190px] w-[190px] flex-col items-center justify-center rounded-full bg-white/95 text-center shadow-[inset_0_0_0_1px_rgba(220,228,240,0.9),0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur">
-                  <div className="text-[15px] font-medium text-[#7383a0]">Total Worth</div>
-                  <div className="mt-2 text-[1.15rem] font-semibold leading-tight text-[#10203a] sm:text-[1.5rem]">
+                <div className="z-10 flex h-[150px] w-[150px] flex-col items-center justify-center rounded-full bg-white/95 px-4 text-center shadow-[inset_0_0_0_1px_rgba(220,228,240,0.9),0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur">
+                  <div className="text-[13px] font-medium text-[#7383a0]">Total Worth</div>
+                  <div className="mt-2 text-[1.1rem] font-semibold leading-tight text-[#10203a] sm:text-[1.35rem]">
                     {formatCurrency(totalWorth)}
                   </div>
-                  <div className="mt-3 max-w-[110px] text-sm leading-6 text-[#7383a0]">
+                  <div className="mt-2 max-w-[100px] text-xs leading-5 text-[#7383a0]">
                     Based on current asset value
                   </div>
                 </div>
@@ -99,29 +99,30 @@ export function DashboardAssetAllocation({
           </div>
 
           <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
             {allocation.map((entry, index) => (
               <div
                 key={entry.key}
-                className="rounded-[22px] border border-[#dce4f0] bg-white/90 px-5 py-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]"
+                className="rounded-[20px] border border-[#dce4f0] bg-white/90 px-4 py-3.5 shadow-[0_10px_24px_rgba(15,23,42,0.04)]"
               >
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 text-[#213655]">
                     <span
-                      className="h-4 w-4 rounded-full shadow-[0_0_0_4px_rgba(255,255,255,0.95)]"
+                      className="h-3.5 w-3.5 rounded-full shadow-[0_0_0_4px_rgba(255,255,255,0.95)]"
                       style={{ backgroundColor: ALLOCATION_COLORS[index % ALLOCATION_COLORS.length] }}
                     />
-                    <span className="text-xl font-medium tracking-tight">{entry.label}</span>
+                    <span className="text-base font-medium tracking-tight">{entry.label}</span>
                   </div>
                   <div className="text-right">
-                    <div className="text-[0.95rem] font-semibold text-[#1c3152] sm:text-[1.15rem]">
+                    <div className="text-sm font-semibold text-[#1c3152] sm:text-[1rem]">
                       {formatCurrency(entry.value)}
                     </div>
-                    <div className="mt-1 text-sm font-medium text-[#72829a]">
+                    <div className="mt-0.5 text-xs font-medium text-[#72829a]">
                       {formatPercent(entry.percentage)}
                     </div>
                   </div>
                 </div>
-                <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#edf3fb]">
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#edf3fb]">
                   <div
                     className="h-full rounded-full transition-[width]"
                     style={{
@@ -132,8 +133,9 @@ export function DashboardAssetAllocation({
                 </div>
               </div>
             ))}
+            </div>
 
-            <div className="grid gap-3 pt-3 md:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <InsightTile
                 icon={<CircleDollarSign className="h-5 w-5" />}
                 label="Largest Asset"
@@ -157,7 +159,7 @@ export function DashboardAssetAllocation({
               />
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               <MiniStat
                 icon={<PiggyBank className="h-4 w-4" />}
                 label="Cash allocation"

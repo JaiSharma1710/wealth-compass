@@ -71,6 +71,7 @@ const DISTRIBUTION_COLORS = [
 ];
 
 const RADIAN = Math.PI / 180;
+const TRANSACTIONS_PAGE_SIZE = 5;
 
 function renderDistributionLabel({
   cx,
@@ -104,6 +105,14 @@ function renderDistributionLabel({
   );
 }
 
+function formatSignedCurrency(value: number, formatter: Intl.NumberFormat) {
+  return value >= 0 ? formatter.format(value) : `(${formatter.format(Math.abs(value))})`;
+}
+
+function formatSignedPercent(value: number) {
+  return value >= 0 ? `${value.toFixed(1)}%` : `(${Math.abs(value).toFixed(1)}%)`;
+}
+
 export function MutualFundsView({
   currencyCode,
   initialData,
@@ -116,6 +125,14 @@ export function MutualFundsView({
   const [selectedBuyFund, setSelectedBuyFund] = useState<MfSchemeOption[]>([]);
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
   const firstHolding = initialData.holdings[0];
+  const [selectedBuySchemeCode, setSelectedBuySchemeCode] = useState("");
+  const [selectedSellSchemeCode, setSelectedSellSchemeCode] = useState(
+    firstHolding ? String(firstHolding.schemeCode) : ""
+  );
+  const [isDistributionModalOpen, setIsDistributionModalOpen] = useState(false);
+  const [latestModalNav, setLatestModalNav] = useState<number | null>(null);
+  const [isLatestModalNavLoading, setIsLatestModalNavLoading] = useState(false);
+  const [latestModalNavError, setLatestModalNavError] = useState<string | null>(null);
   const [selectedHistorySchemeCode, setSelectedHistorySchemeCode] = useState(
     firstHolding ? String(firstHolding.schemeCode) : ""
   );
@@ -136,6 +153,9 @@ export function MutualFundsView({
       })),
     [initialData.distribution]
   );
+  const visibleDistributionData = distributionData.slice(0, 8);
+  const hiddenDistributionCount = Math.max(distributionData.length - 8, 0);
+  const [transactionsPage, setTransactionsPage] = useState(1);
   const topHolding = distributionData[0];
   const effectiveSelectedHistorySchemeCode = initialData.holdings.some(
     (holding) => String(holding.schemeCode) === selectedHistorySchemeCode
@@ -148,6 +168,15 @@ export function MutualFundsView({
     initialData.holdings.find(
       (holding) => String(holding.schemeCode) === effectiveSelectedHistorySchemeCode
     ) || firstHolding;
+  const totalTransactionPages = Math.max(
+    1,
+    Math.ceil(initialData.recentTransactions.length / TRANSACTIONS_PAGE_SIZE)
+  );
+  const currentTransactionsPage = Math.min(transactionsPage, totalTransactionPages);
+  const paginatedTransactions = initialData.recentTransactions.slice(
+    (currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE,
+    currentTransactionsPage * TRANSACTIONS_PAGE_SIZE
+  );
   const {
     register: registerBuy,
     handleSubmit: handleBuySubmit,
@@ -167,6 +196,7 @@ export function MutualFundsView({
     register: registerSell,
     handleSubmit: handleSellSubmit,
     reset: resetSell,
+    setValue: setSellValue,
     formState: { errors: sellErrors, isSubmitting: isSellSubmitting },
   } = useForm<SellMfValues>({
     defaultValues: {
@@ -230,6 +260,61 @@ export function MutualFundsView({
     };
   }, [effectiveSelectedHistorySchemeCode, selectedHolding]);
 
+  useEffect(() => {
+    const selectedSchemeCode =
+      activeModal === "buy"
+        ? selectedBuySchemeCode
+        : activeModal === "sell"
+          ? selectedSellSchemeCode
+          : "";
+
+    if (!activeModal || !selectedSchemeCode) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadLatestNav() {
+      try {
+        const response = await fetch(
+          `/api/mutual-funds/latest-nav?schemeCode=${encodeURIComponent(selectedSchemeCode)}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+        const result = (await response.json().catch(() => null)) as
+          | { latestNav?: number; message?: string }
+          | null;
+
+        if (!response.ok || typeof result?.latestNav !== "number") {
+          throw new Error(result?.message || "Unable to load the latest NAV right now.");
+        }
+
+        setLatestModalNav(result.latestNav);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setLatestModalNav(null);
+        setLatestModalNavError(
+          error instanceof Error ? error.message : "Unable to load the latest NAV right now."
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLatestModalNavLoading(false);
+        }
+      }
+    }
+
+    void loadLatestNav();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeModal, selectedBuySchemeCode, selectedSellSchemeCode]);
+
   async function handleFundSearch(query: string) {
     if (!query.trim()) {
       setFundSearchOptions([]);
@@ -266,6 +351,11 @@ export function MutualFundsView({
     setActiveModal(null);
     setFundSearchOptions([]);
     setSelectedBuyFund([]);
+    setSelectedBuySchemeCode("");
+    setSelectedSellSchemeCode(firstHolding ? String(firstHolding.schemeCode) : "");
+    setLatestModalNav(null);
+    setLatestModalNavError(null);
+    setIsLatestModalNavLoading(false);
     resetBuy({
       previousSchemeCode: "",
       units: "",
@@ -380,6 +470,9 @@ export function MutualFundsView({
         ? true
         : "Select a previous fund or search for a mutual fund.",
   });
+  const sellSchemeField = registerSell("schemeCode", {
+    required: "Please choose a fund.",
+  });
 
   return (
     <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
@@ -418,7 +511,12 @@ export function MutualFundsView({
               <div className="flex flex-col gap-2">
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                  onClick={() => setActiveModal("buy")}
+                  onClick={() => {
+                    setLatestModalNav(null);
+                    setLatestModalNavError(null);
+                    setIsLatestModalNavLoading(false);
+                    setActiveModal("buy");
+                  }}
                   type="button"
                 >
                   <Plus className="size-4" />
@@ -427,7 +525,13 @@ export function MutualFundsView({
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
                   disabled={!initialData.holdings.length}
-                  onClick={() => setActiveModal("sell")}
+                  onClick={() => {
+                    setSelectedSellSchemeCode(firstHolding ? String(firstHolding.schemeCode) : "");
+                    setLatestModalNav(null);
+                    setLatestModalNavError(null);
+                    setIsLatestModalNavLoading(Boolean(firstHolding));
+                    setActiveModal("sell");
+                  }}
                   type="button"
                 >
                   <Minus className="size-4" />
@@ -440,21 +544,17 @@ export function MutualFundsView({
           <SummaryCard
             icon={<Landmark className="size-5 text-neutral-950" />}
             subtitle={`Realized ${realizedProfitUp ? "Profit" : "Loss"}`}
-            title={`${realizedProfitUp ? "+" : "-"}${formatter.format(
-              Math.abs(initialData.totalRealizedProfitAmount)
-            )}`}
+            title={formatSignedCurrency(initialData.totalRealizedProfitAmount, formatter)}
             tone={realizedProfitUp ? "positive" : "negative"}
-            detail={`${realizedProfitUp ? "+" : ""}${initialData.totalRealizedProfitPct.toFixed(1)}% booked`}
+            detail={`${formatSignedPercent(initialData.totalRealizedProfitPct)} booked`}
           />
 
           <SummaryCard
             icon={<Wallet className="size-5 text-neutral-950" />}
             subtitle={`Unrealized ${overallProfitUp ? "Profit" : "Loss"}`}
-            title={`${overallProfitUp ? "+" : "-"}${formatter.format(
-              Math.abs(initialData.totalProfitLossAmount)
-            )}`}
+            title={formatSignedCurrency(initialData.totalProfitLossAmount, formatter)}
             tone={overallProfitUp ? "positive" : "negative"}
-            detail={`${overallProfitUp ? "+" : ""}${initialData.totalProfitLossPct.toFixed(1)}% overall`}
+            detail={`${formatSignedPercent(initialData.totalProfitLossPct)} overall`}
           />
         </div>
 
@@ -584,18 +684,12 @@ export function MutualFundsView({
                     label={topHolding && topHolding.profitLossAmount < 0 ? "Loss" : "Profit"}
                     value={
                       topHolding
-                        ? `${topHolding.profitLossAmount >= 0 ? "+" : "-"}${formatter.format(
-                            Math.abs(topHolding.profitLossAmount)
-                          )}`
+                        ? formatSignedCurrency(topHolding.profitLossAmount, formatter)
                         : formatter.format(0)
                     }
                     tone={topHolding && topHolding.profitLossAmount < 0 ? "negative" : "positive"}
                   />
                 </div>
-              </div>
-
-              <div className="rounded-[1.75rem] border border-dashed border-[#dbe2ee] bg-[#fafaf8] p-5 text-sm text-neutral-600">
-                Two database models back this section: one for buy/sell transactions and one monthly snapshot per user-month for portfolio distribution and invested capital.
               </div>
             </div>
           </section>
@@ -615,61 +709,72 @@ export function MutualFundsView({
 
           <div className="mt-6 grid gap-6 xl:grid-cols-2">
             <div className="rounded-[1.75rem] border border-[#eef2f7] bg-[#fafaf8] p-5">
-              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
                 <div>
                   <h4 className="text-base font-semibold text-neutral-950">Allocation Split</h4>
                   <p className="mt-1 text-sm text-neutral-500">
                     Current value spread across your active mutual fund holdings.
                   </p>
                 </div>
-                {distributionData.length ? (
-                  <div className="flex max-w-full flex-wrap gap-x-3 gap-y-2 sm:max-w-[18rem] sm:justify-end">
-                    {distributionData.map((entry) => (
+              </div>
+
+              {distributionData.length ? (
+                <>
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {visibleDistributionData.map((entry) => (
                       <div
                         key={entry.schemeCode}
-                        className="flex max-w-[12rem] items-center gap-2"
+                        className="flex min-w-0 items-center gap-2 rounded-[0.9rem] border border-[#edf1f7] bg-white/85 px-3 py-2"
+                        title={entry.schemeName}
                       >
                         <span
                           className="size-2.5 shrink-0 rounded-full"
                           style={{ backgroundColor: entry.color }}
                         />
-                        <span className="truncate text-xs font-medium text-neutral-600">
+                        <span className="min-w-0 truncate text-xs font-medium text-neutral-600">
                           {entry.schemeName}
                         </span>
                       </div>
                     ))}
-                  </div>
-                ) : null}
-              </div>
-
-              {distributionData.length ? (
-                <div className="h-[22rem] rounded-[1.25rem] bg-white p-3 shadow-sm">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        cx="50%"
-                        cy="50%"
-                        data={distributionData}
-                        dataKey="currentValue"
-                        endAngle={-270}
-                        innerRadius={0}
-                        isAnimationActive
-                        label={renderDistributionLabel}
-                        labelLine={false}
-                        nameKey="schemeName"
-                        outerRadius="86%"
-                        paddingAngle={distributionData.length > 1 ? 1 : 0}
-                        startAngle={90}
-                        stroke="#ffffff"
-                        strokeWidth={2}
+                    {hiddenDistributionCount ? (
+                      <button
+                        className="flex min-w-0 items-center justify-center rounded-[0.9rem] border border-dashed border-[#d6deea] bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition hover:border-[#111111] hover:text-neutral-950"
+                        onClick={() => setIsDistributionModalOpen(true)}
+                        type="button"
                       >
-                        {distributionData.map((entry) => (
-                          <Cell key={entry.schemeCode} fill={entry.color} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
+                        {hiddenDistributionCount} more
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 h-[22rem] rounded-[1.25rem] bg-white p-3 shadow-sm">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          cx="50%"
+                          cy="50%"
+                          data={distributionData}
+                          dataKey="currentValue"
+                          endAngle={-270}
+                          innerRadius={0}
+                          isAnimationActive
+                          label={renderDistributionLabel}
+                          labelLine={false}
+                          nameKey="schemeName"
+                          outerRadius="86%"
+                          paddingAngle={distributionData.length > 1 ? 1 : 0}
+                          startAngle={90}
+                          stroke="#ffffff"
+                          strokeWidth={2}
+                        >
+                          {distributionData.map((entry) => (
+                            <Cell key={entry.schemeCode} fill={entry.color} />
+                          ))}
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
               ) : (
                 <div className="flex h-[18rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white text-sm text-neutral-500">
                   No mutual fund distribution yet.
@@ -726,9 +831,7 @@ export function MutualFundsView({
                       }
                       value={
                         selectedFundHistory
-                          ? `${selectedFundHistory.changeAmount >= 0 ? "+" : "-"}${formatter.format(
-                              Math.abs(selectedFundHistory.changeAmount)
-                            )} (${selectedFundHistory.changeAmount >= 0 ? "+" : ""}${selectedFundHistory.changePct.toFixed(1)}%)`
+                          ? `${formatSignedCurrency(selectedFundHistory.changeAmount, formatter)} • ${formatSignedPercent(selectedFundHistory.changePct)}`
                           : "--"
                       }
                     />
@@ -822,11 +925,21 @@ export function MutualFundsView({
                 Latest mutual fund buy and sell activity saved in the portfolio.
               </p>
             </div>
+            {initialData.recentTransactions.length ? (
+              <p className="text-sm font-medium text-neutral-500">
+                Showing {(currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE + 1}-
+                {Math.min(
+                  currentTransactionsPage * TRANSACTIONS_PAGE_SIZE,
+                  initialData.recentTransactions.length
+                )}{" "}
+                of {initialData.recentTransactions.length}
+              </p>
+            ) : null}
           </div>
 
           <div className="mt-5 grid gap-3">
             {initialData.recentTransactions.length ? (
-              initialData.recentTransactions.map((transaction) => {
+              paginatedTransactions.map((transaction) => {
                 const positive = transaction.transactionType === "buy";
 
                 return (
@@ -869,10 +982,9 @@ export function MutualFundsView({
                               : "text-rose-600"
                           }`}
                         >
-                          Realized {transaction.realizedProfitAmount >= 0 ? "+" : "-"}
-                          {formatter.format(Math.abs(transaction.realizedProfitAmount))}
+                          Realized {formatSignedCurrency(transaction.realizedProfitAmount, formatter)}
                           {transaction.realizedProfitPct != null
-                            ? ` (${transaction.realizedProfitAmount >= 0 ? "+" : ""}${transaction.realizedProfitPct.toFixed(1)}%)`
+                            ? ` • ${formatSignedPercent(transaction.realizedProfitPct)}`
                             : ""}
                         </p>
                       ) : null}
@@ -886,6 +998,34 @@ export function MutualFundsView({
               </div>
             )}
           </div>
+
+          {initialData.recentTransactions.length > TRANSACTIONS_PAGE_SIZE ? (
+            <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#eef2f7] pt-4">
+              <p className="text-sm text-neutral-500">
+                Page {currentTransactionsPage} of {totalTransactionPages}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-xl border border-[#dbe2ee] bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={currentTransactionsPage === 1}
+                  onClick={() => setTransactionsPage((page) => Math.max(1, page - 1))}
+                  type="button"
+                >
+                  Previous
+                </button>
+                <button
+                  className="rounded-xl border border-[#dbe2ee] bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={currentTransactionsPage === totalTransactionPages}
+                  onClick={() =>
+                    setTransactionsPage((page) => Math.min(totalTransactionPages, page + 1))
+                  }
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
       </div>
 
@@ -910,12 +1050,20 @@ export function MutualFundsView({
                       void previousBuyFundField.onChange(event);
 
                       if (!event.target.value) {
+                        setLatestModalNav(null);
+                        setLatestModalNavError(null);
+                        setIsLatestModalNavLoading(false);
+                        setSelectedBuySchemeCode("");
                         return;
                       }
 
                       setSelectedBuyFund([]);
                       setFundSearchOptions([]);
                       clearBuyErrors("previousSchemeCode");
+                      setLatestModalNav(null);
+                      setLatestModalNavError(null);
+                      setIsLatestModalNavLoading(true);
+                      setSelectedBuySchemeCode(event.target.value);
 
                       const matchingHolding = initialData.holdings.find(
                         (holding) => String(holding.schemeCode) === event.target.value
@@ -957,11 +1105,20 @@ export function MutualFundsView({
                   setSelectedBuyFund(selected as MfSchemeOption[]);
 
                   if (selected.length) {
+                    setLatestModalNav(null);
+                    setLatestModalNavError(null);
+                    setIsLatestModalNavLoading(true);
+                    setSelectedBuySchemeCode(String((selected[0] as MfSchemeOption).schemeCode));
                     setBuyValue("previousSchemeCode", "", {
                       shouldDirty: true,
                       shouldValidate: true,
                     });
                     clearBuyErrors("previousSchemeCode");
+                  } else {
+                    setLatestModalNav(null);
+                    setLatestModalNavError(null);
+                    setIsLatestModalNavLoading(false);
+                    setSelectedBuySchemeCode("");
                   }
                 }}
                 onSearch={handleFundSearch}
@@ -994,6 +1151,14 @@ export function MutualFundsView({
                 <p className="text-xs text-neutral-500">
                   Start typing at least 2 characters to search for a different fund.
                 </p>
+              ) : null}
+              {selectedBuySchemeCode ? (
+                <ModalNavHint
+                  formatter={formatter}
+                  isLoading={isLatestModalNavLoading}
+                  latestNav={latestModalNav}
+                  message={latestModalNavError}
+                />
               ) : null}
             </div>
 
@@ -1070,9 +1235,25 @@ export function MutualFundsView({
               <span className="text-sm font-medium text-neutral-800">Mutual Fund</span>
               <select
                 className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                {...registerSell("schemeCode", {
-                  required: "Please choose a fund.",
-                })}
+                {...sellSchemeField}
+                onChange={(event) => {
+                  void sellSchemeField.onChange(event);
+                  setLatestModalNav(null);
+                  setLatestModalNavError(null);
+                  setIsLatestModalNavLoading(true);
+                  setSelectedSellSchemeCode(event.target.value);
+
+                  const matchingHolding = initialData.holdings.find(
+                    (holding) => String(holding.schemeCode) === event.target.value
+                  );
+
+                  if (matchingHolding) {
+                    setSellValue("nav", String(matchingHolding.currentNav), {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    });
+                  }
+                }}
               >
                 {initialData.holdings.map((holding) => (
                   <option key={holding.schemeCode} value={holding.schemeCode}>
@@ -1080,6 +1261,12 @@ export function MutualFundsView({
                   </option>
                 ))}
               </select>
+              <ModalNavHint
+                formatter={formatter}
+                isLoading={isLatestModalNavLoading}
+                latestNav={latestModalNav}
+                message={latestModalNavError}
+              />
               {sellErrors.schemeCode ? (
                 <span className="text-sm text-destructive">{sellErrors.schemeCode.message}</span>
               ) : null}
@@ -1146,7 +1333,95 @@ export function MutualFundsView({
           </form>
         </ModalFrame>
       ) : null}
+
+      {isDistributionModalOpen ? (
+        <ModalFrame
+          description="All mutual fund allocations with the complete distribution chart."
+          maxWidthClassName="max-w-5xl"
+          title="All Fund Allocations"
+          onClose={() => setIsDistributionModalOpen(false)}
+        >
+          <div className="mt-6 space-y-5">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {distributionData.map((entry) => (
+                <div
+                  key={entry.schemeCode}
+                  className="flex min-w-0 items-center gap-2 rounded-[0.9rem] border border-[#edf1f7] bg-[#fafaf8] px-3 py-2"
+                  title={entry.schemeName}
+                >
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  <span className="min-w-0 truncate text-xs font-medium text-neutral-700">
+                    {entry.schemeName}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="h-[28rem] rounded-[1.5rem] border border-[#eef2f7] bg-[#fafaf8] p-4 shadow-sm">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    cx="50%"
+                    cy="50%"
+                    data={distributionData}
+                    dataKey="currentValue"
+                    endAngle={-270}
+                    innerRadius={0}
+                    isAnimationActive
+                    label={renderDistributionLabel}
+                    labelLine={false}
+                    nameKey="schemeName"
+                    outerRadius="88%"
+                    paddingAngle={distributionData.length > 1 ? 1 : 0}
+                    startAngle={90}
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                  >
+                    {distributionData.map((entry) => (
+                      <Cell key={entry.schemeCode} fill={entry.color} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </ModalFrame>
+      ) : null}
     </div>
+  );
+}
+
+function ModalNavHint({
+  latestNav,
+  isLoading,
+  message,
+  formatter,
+}: {
+  latestNav: number | null;
+  isLoading: boolean;
+  message: string | null;
+  formatter: Intl.NumberFormat;
+}) {
+  if (isLoading) {
+    return <p className="text-xs text-neutral-500">Loading latest NAV...</p>;
+  }
+
+  if (message) {
+    return <p className="text-xs text-rose-600">{message}</p>;
+  }
+
+  if (latestNav == null) {
+    return null;
+  }
+
+  return (
+    <p className="rounded-[0.9rem] border border-[#e6ebf2] bg-[#f8fbff] px-3 py-2 text-xs font-medium text-neutral-600">
+      Latest NAV from live data:{" "}
+      <span className="font-semibold text-neutral-950">{formatter.format(latestNav)}</span>
+    </p>
   );
 }
 
@@ -1169,6 +1444,18 @@ function SummaryCard({
       : tone === "negative"
         ? "bg-rose-50"
         : "bg-[#f2f5ef]";
+  const valueClass =
+    tone === "positive"
+      ? "text-emerald-600"
+      : tone === "negative"
+        ? "text-rose-600"
+        : "text-neutral-950";
+  const detailClass =
+    tone === "positive"
+      ? "text-emerald-600"
+      : tone === "negative"
+        ? "text-rose-600"
+        : "text-neutral-500";
 
   return (
     <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
@@ -1178,10 +1465,10 @@ function SummaryCard({
         </div>
         <div>
           <p className="text-sm font-medium text-neutral-500">{subtitle}</p>
-          <p className="mt-2 text-[1.75rem] font-semibold tracking-tight text-neutral-950">
+          <p className={`mt-2 text-[1.75rem] font-semibold tracking-tight ${valueClass}`}>
             {title}
           </p>
-          {detail ? <p className="mt-2 text-sm text-neutral-500">{detail}</p> : null}
+          {detail ? <p className={`mt-2 text-sm ${detailClass}`}>{detail}</p> : null}
         </div>
       </div>
     </section>
@@ -1219,15 +1506,19 @@ function ModalFrame({
   description,
   children,
   onClose,
+  maxWidthClassName = "max-w-2xl",
 }: {
   title: string;
   description: string;
   children: React.ReactNode;
   onClose: () => void;
+  maxWidthClassName?: string;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
-      <div className="w-full max-w-2xl rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+      <div
+        className={`w-full rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] ${maxWidthClassName}`}
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-xl font-semibold tracking-tight text-neutral-950">{title}</h3>

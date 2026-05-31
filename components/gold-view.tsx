@@ -22,7 +22,6 @@ import {
   Minus,
   Plus,
   RefreshCw,
-  Trash2,
   Wallet,
   X,
 } from "lucide-react";
@@ -71,6 +70,14 @@ const GOLD_CHART_COLORS = [
 ];
 const RADIAN = Math.PI / 180;
 
+function formatSignedCurrency(value: number, formatter: Intl.NumberFormat) {
+  return value >= 0 ? formatter.format(value) : `(${formatter.format(Math.abs(value))})`;
+}
+
+function formatSignedPercent(value: number) {
+  return value >= 0 ? `${value.toFixed(1)}%` : `(${Math.abs(value).toFixed(1)}%)`;
+}
+
 function renderPieLabel({
   cx,
   cy,
@@ -109,7 +116,6 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
   );
   const [activityState, setActivityState] = useState<GoldRecentActivityPage | null>(null);
   const [isActivityLoading, setIsActivityLoading] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
   const distributionData = useMemo(
@@ -320,42 +326,6 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
     }
   }
 
-  async function deleteActivity(entry: GoldActivitySummary) {
-    if (!window.confirm("Delete this gold transaction?")) {
-      return;
-    }
-
-    setDeletingId(entry.id);
-
-    try {
-      const response = await fetch(
-        `/api/gold?transactionId=${encodeURIComponent(entry.id)}`,
-        {
-          method: "DELETE",
-        }
-      );
-      const result = (await response.json().catch(() => null)) as
-        | { message?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(result?.message || "Unable to delete gold transaction.");
-      }
-
-      toast.success(result?.message || "Gold transaction deleted.");
-      setActivityState(null);
-      startTransition(() => {
-        router.refresh();
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Unable to delete gold transaction."
-      );
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
   const activityRangeStart = activity.totalCount ? (activity.page - 1) * activity.pageSize + 1 : 0;
   const activityRangeEnd = activity.totalCount
     ? activityRangeStart + activity.entries.length - 1
@@ -436,10 +406,8 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
           <SummaryCard
             icon={<Coins className="size-5 text-neutral-950" />}
             subtitle={profitUp ? "Total Profit" : "Total Loss"}
-            title={`${profitUp ? "+" : "-"}${formatter.format(
-              Math.abs(initialData.totalProfitLossAmount)
-            )}`}
-            detail={`${profitUp ? "+" : ""}${initialData.totalProfitLossPct.toFixed(1)}% overall`}
+            title={formatSignedCurrency(initialData.totalProfitLossAmount, formatter)}
+            detail={`${formatSignedPercent(initialData.totalProfitLossPct)} overall`}
             tone={profitUp ? "positive" : "negative"}
           />
         </div>
@@ -625,10 +593,8 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                             : "text-rose-600"
                         }`}
                       >
-                        {holding.profitLossAmount >= 0 ? "+" : "-"}
-                        {formatter.format(Math.abs(holding.profitLossAmount))} (
-                        {holding.profitLossAmount >= 0 ? "+" : ""}
-                        {holding.profitLossPct.toFixed(1)}%)
+                        {formatSignedCurrency(holding.profitLossAmount, formatter)} •{" "}
+                        {formatSignedPercent(holding.profitLossPct)}
                       </td>
                     </tr>
                   ))}
@@ -649,7 +615,7 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                 Recent Activity
               </h3>
               <p className="mt-1 text-sm text-neutral-500">
-                Latest gold buys, sells, valuation updates, and delete controls.
+                Latest gold buys, sells, and valuation updates.
               </p>
             </div>
           </div>
@@ -692,24 +658,13 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                       </p>
                     </div>
 
-                    <div className="flex shrink-0 items-center justify-between gap-4 md:justify-end">
-                      <div className="text-right">
-                        <p className={`text-sm font-semibold ${tone}`}>
-                          {formatActivityAmount(entry, formatter)}
-                        </p>
-                        <p className="mt-1 text-xs font-medium uppercase tracking-[0.14em] text-neutral-400">
-                          {entry.transactionType}
-                        </p>
-                      </div>
-                      <button
-                        aria-label="Delete gold transaction"
-                        className="inline-flex size-10 items-center justify-center rounded-xl border border-[#dbe2ee] bg-white text-neutral-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
-                        disabled={deletingId === entry.id || isPending}
-                        onClick={() => void deleteActivity(entry)}
-                        type="button"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
+                    <div className="shrink-0 text-right">
+                      <p className={`text-sm font-semibold ${tone}`}>
+                        {formatActivityAmount(entry, formatter)}
+                      </p>
+                      <p className="mt-1 text-xs font-medium uppercase tracking-[0.14em] text-neutral-400">
+                        {entry.transactionType}
+                      </p>
                     </div>
                   </div>
                 );
@@ -1069,13 +1024,25 @@ function SummaryCard({
       : tone === "negative"
         ? "bg-rose-50 text-rose-700"
         : "bg-[#f7f7f5] text-neutral-600";
+  const valueClass =
+    tone === "positive"
+      ? "text-emerald-600"
+      : tone === "negative"
+        ? "text-rose-600"
+        : "text-neutral-950";
+  const detailClass =
+    tone === "positive"
+      ? "text-emerald-600"
+      : tone === "negative"
+        ? "text-rose-600"
+        : "text-neutral-500";
 
   return (
     <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
       <div className={`mb-5 inline-flex rounded-2xl p-3 ${toneClass}`}>{icon}</div>
       <p className="text-sm font-medium text-neutral-500">{subtitle}</p>
-      <h3 className="mt-2 text-2xl font-semibold tracking-tight text-neutral-950">{title}</h3>
-      {detail ? <p className="mt-2 text-sm font-medium text-neutral-500">{detail}</p> : null}
+      <h3 className={`mt-2 text-2xl font-semibold tracking-tight ${valueClass}`}>{title}</h3>
+      {detail ? <p className={`mt-2 text-sm font-medium ${detailClass}`}>{detail}</p> : null}
     </section>
   );
 }

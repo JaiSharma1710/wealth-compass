@@ -50,7 +50,13 @@ export function DashboardView({
       return "Unavailable";
     }
 
-    return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+    return value >= 0 ? `+${value.toFixed(2)}%` : `(${Math.abs(value).toFixed(2)}%)`;
+  }
+
+  function formatSignedCurrency(value: number) {
+    return value >= 0
+      ? formatter.format(value)
+      : `(${formatter.format(Math.abs(value))})`;
   }
 
   function formatDate(value: string) {
@@ -135,9 +141,6 @@ export function DashboardView({
               <h1 className="text-3xl font-semibold tracking-tight text-[#10203a]">
                 Track your total wealth
               </h1>
-              <p className="max-w-3xl text-sm text-[#5f6f89]">
-                See your current worth, allocation, movement over time, and recent activity across stocks, mutual funds, gold, and cash.
-              </p>
               <p className="text-sm text-[#72829a]">
                 Last updated:{" "}
                 {data.summary.lastUpdatedAt ? formatDateTime(data.summary.lastUpdatedAt) : "Not yet"}
@@ -213,6 +216,7 @@ export function DashboardView({
             <DashboardSummaryCards
               assetClasses={data.assetClasses}
               formatCurrency={(value) => formatter.format(value)}
+              formatSignedCurrency={formatSignedCurrency}
               formatPercent={formatPercent}
               goalsSummary={data.goalsSummary}
               summary={data.summary}
@@ -264,12 +268,12 @@ export function DashboardView({
                         <td className="px-3 py-3">{formatter.format(assetClass.currentValue)}</td>
                         <td className="px-3 py-3">{formatter.format(assetClass.investedAmount)}</td>
                         <td className={`px-3 py-3 ${assetClass.gainLoss >= 0 ? "text-[#0f7a56]" : "text-[#b23434]"}`}>
-                          {formatter.format(assetClass.gainLoss)} • {formatPercent(assetClass.gainLossPercent)}
+                          {formatSignedCurrency(assetClass.gainLoss)} • {formatPercent(assetClass.gainLossPercent)}
                         </td>
                         <td className="px-3 py-3">
                           {assetClass.todayGainLoss == null
                             ? "Unavailable"
-                            : `${formatter.format(assetClass.todayGainLoss)} • ${formatPercent(
+                            : `${formatSignedCurrency(assetClass.todayGainLoss)} • ${formatPercent(
                                 assetClass.todayGainLossPercent
                               )}`}
                         </td>

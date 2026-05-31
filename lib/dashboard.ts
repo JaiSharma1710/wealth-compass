@@ -121,7 +121,7 @@ function buildStockActivity(
 function buildMutualFundActivity(
   dashboard: Awaited<ReturnType<typeof getMutualFundDashboard>>
 ): DashboardRecentActivityItem[] {
-  return dashboard.recentTransactions.map((transaction) => ({
+  return dashboard.recentTransactions.slice(0, 12).map((transaction) => ({
     id: `mf-${transaction.id}`,
     date: transaction.date,
     assetClassKey: "mutualFunds",

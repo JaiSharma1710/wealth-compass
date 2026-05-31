@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -15,22 +14,26 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { PieLabelRenderProps } from "recharts";
+import type { PieLabelRenderProps, TooltipContentProps } from "recharts";
+import type {
+  NameType,
+  ValueType,
+} from "recharts/types/component/DefaultTooltipContent";
 import { AsyncTypeahead, Highlighter } from "react-bootstrap-typeahead";
 import { useForm } from "react-hook-form";
 import {
   ArrowDownRight,
   ArrowUpRight,
-  BadgeIndianRupee,
-  BriefcaseBusiness,
   CircleAlert,
   LoaderCircle,
+  Minus,
   Plus,
   RefreshCw,
   TrendingUp,
 } from "lucide-react";
 import toast from "react-hot-toast";
 
+import { StocksHoldingsTable } from "@/components/stocks-holdings-table";
 import type { StockDashboardData, StockHoldingSummary, StockSearchResult } from "@/lib/stocks.types";
 
 type StocksViewProps = {
@@ -52,8 +55,26 @@ type SellFormValues = {
   note: string;
 };
 
-const CHART_COLORS = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#7c3aed", "#0891b2"];
+const CHART_COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#f59e0b",
+  "#ef4444",
+  "#7c3aed",
+  "#0891b2",
+  "#dc2626",
+  "#0f766e",
+  "#ca8a04",
+  "#1d4ed8",
+  "#9333ea",
+  "#059669",
+  "#c2410c",
+  "#be123c",
+  "#0369a1",
+  "#4f46e5",
+];
 const RADIAN = Math.PI / 180;
+const STOCK_TRANSACTIONS_PAGE_SIZE = 5;
 
 function renderPieLabel({
   cx,
@@ -90,6 +111,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
   const router = useRouter();
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
   const [activeModal, setActiveModal] = useState<"buy" | "sell" | null>(null);
+  const [isPortfolioMixModalOpen, setIsPortfolioMixModalOpen] = useState(false);
   const [selectedSearch, setSelectedSearch] = useState<StockSearchResult[]>([]);
   const [selectedHolding, setSelectedHolding] = useState<StockHoldingSummary | null>(
     initialData.holdings[0] || null
@@ -97,6 +119,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
   const [searchOptions, setSearchOptions] = useState<StockSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
+  const [transactionsPage, setTransactionsPage] = useState(1);
   const [isPending, startTransition] = useTransition();
   const buyForm = useForm<BuyFormValues>({
     defaultValues: {
@@ -119,10 +142,8 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
     ...entry,
     color: CHART_COLORS[index % CHART_COLORS.length],
   }));
-  const sectorAllocationData = initialData.sectorAllocation.map((entry, index) => ({
-    ...entry,
-    color: CHART_COLORS[index % CHART_COLORS.length],
-  }));
+  const visibleStockAllocationData = stockAllocationData.slice(0, 8);
+  const hiddenStockAllocationCount = Math.max(stockAllocationData.length - 8, 0);
   const holdingsChartData = initialData.holdings.map((holding) => ({
     symbol: holding.symbol,
     invested: holding.investedAmount,
@@ -130,6 +151,15 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
   }));
   const filteredTransactions = initialData.transactions.filter((transaction) =>
     transactionFilter === "ALL" ? true : transaction.type === transactionFilter
+  );
+  const totalTransactionPages = Math.max(
+    1,
+    Math.ceil(filteredTransactions.length / STOCK_TRANSACTIONS_PAGE_SIZE)
+  );
+  const currentTransactionsPage = Math.min(transactionsPage, totalTransactionPages);
+  const paginatedTransactions = filteredTransactions.slice(
+    (currentTransactionsPage - 1) * STOCK_TRANSACTIONS_PAGE_SIZE,
+    currentTransactionsPage * STOCK_TRANSACTIONS_PAGE_SIZE
   );
 
   async function onSearch(query: string) {
@@ -252,10 +282,6 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               <h1 className="text-3xl font-semibold tracking-tight text-[#10203a]">
                 Stocks
               </h1>
-              <p className="max-w-2xl text-sm text-[#5f6f89]">
-                Track active positions, locked-in realized profit, and full lifecycle history
-                with Yahoo Finance market data.
-              </p>
             </div>
             <div className="flex flex-wrap gap-3">
               <button
@@ -266,22 +292,6 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               >
                 <RefreshCw className={`h-4 w-4 ${isPending ? "animate-spin" : ""}`} />
                 Refresh prices
-              </button>
-              <button
-                className="inline-flex items-center gap-2 rounded-full bg-[#173d7a] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#123466]"
-                onClick={() => setActiveModal("buy")}
-                type="button"
-              >
-                <Plus className="h-4 w-4" />
-                Add buy
-              </button>
-              <button
-                className="inline-flex items-center gap-2 rounded-full bg-[#0f7a56] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#0d6849]"
-                onClick={() => setActiveModal("sell")}
-                type="button"
-              >
-                <ArrowDownRight className="h-4 w-4" />
-                Add sell
               </button>
             </div>
           </div>
@@ -296,123 +306,126 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
           ) : null}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SummaryCard
-            icon={<BriefcaseBusiness className="h-5 w-5" />}
-            label="Current value"
-            value={formatter.format(initialData.totalCurrentValue)}
-            accent="blue"
-          />
-          <SummaryCard
-            icon={<BadgeIndianRupee className="h-5 w-5" />}
-            label="Invested amount"
-            value={formatter.format(initialData.totalInvestedAmount)}
-            accent="slate"
-          />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1.55fr_1fr_1fr]">
+          <section className="rounded-[28px] border border-[#dde5f1] bg-white p-5 shadow-[0_14px_32px_rgba(15,23,42,0.04)] md:col-span-2 xl:col-span-1">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-medium text-[#6d7d97]">Current Portfolio Value</p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10203a] sm:text-[2.35rem]">
+                  {formatter.format(initialData.totalCurrentValue)}
+                </h2>
+                <p className="mt-2 text-sm text-[#6d7d97]">
+                  Invested value: {formatter.format(initialData.totalInvestedAmount)}
+                </p>
+                <div
+                  className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
+                    initialData.totalUnrealizedProfit >= 0
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  {initialData.totalUnrealizedProfit >= 0 ? (
+                    <ArrowUpRight className="size-4" />
+                  ) : (
+                    <ArrowDownRight className="size-4" />
+                  )}
+                  <span>{formatPercent(initialData.totalUnrealizedProfitPercent)}</span>
+                  <span className="text-current/70">overall return</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+                  onClick={() => setActiveModal("buy")}
+                  type="button"
+                >
+                  <Plus className="size-4" />
+                  <span>Add Buy</span>
+                </button>
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!initialData.holdings.length}
+                  onClick={() => setActiveModal("sell")}
+                  type="button"
+                >
+                  <Minus className="size-4" />
+                  <span>Add Sell</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
           <SummaryCard
             icon={<ArrowUpRight className="h-5 w-5" />}
-            label="Unrealized P&L"
-            value={`${formatter.format(initialData.totalUnrealizedProfit)} (${formatPercent(
-              initialData.totalUnrealizedProfitPercent
-            )})`}
+            label={`Unrealized ${initialData.totalUnrealizedProfit >= 0 ? "Profit" : "Loss"}`}
+            value={formatSignedCurrency(initialData.totalUnrealizedProfit, formatter)}
             accent={initialData.totalUnrealizedProfit >= 0 ? "green" : "red"}
+            detail={`${formatPercent(initialData.totalUnrealizedProfitPercent)} overall`}
           />
           <SummaryCard
             icon={<TrendingUp className="h-5 w-5" />}
-            label="Realized P&L"
-            value={formatter.format(initialData.totalRealizedProfit)}
+            label={`Realized ${initialData.totalRealizedProfit >= 0 ? "Profit" : "Loss"}`}
+            value={formatSignedCurrency(initialData.totalRealizedProfit, formatter)}
             accent={initialData.totalRealizedProfit >= 0 ? "green" : "red"}
+            detail="Booked on completed sells"
           />
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-          <Panel title="Active holdings" subtitle={`${initialData.holdingCount} open positions`}>
-            {initialData.holdings.length ? (
-              <div className="overflow-x-auto">
-                <table className="min-w-full border-separate border-spacing-y-3">
-                  <thead>
-                    <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-[#7c8aa5]">
-                      <th className="px-3">Stock</th>
-                      <th className="px-3">Qty</th>
-                      <th className="px-3">Avg</th>
-                      <th className="px-3">Current</th>
-                      <th className="px-3">P&L</th>
-                      <th className="px-3">Today</th>
-                      <th className="px-3">Allocation</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {initialData.holdings.map((holding) => (
-                      <tr
-                        key={holding.id}
-                        className="rounded-2xl bg-[#f8fbff] text-sm text-[#143155] shadow-[inset_0_0_0_1px_#e4edf7]"
-                      >
-                        <td className="rounded-l-2xl px-3 py-3">
-                          <div className="flex flex-col gap-1">
-                            <Link
-                              className="font-semibold text-[#173d7a] hover:text-[#0f2d5c]"
-                              href={`/stocks/${encodeURIComponent(holding.symbol)}`}
-                            >
-                              {displaySymbol(holding.symbol, holding.shortName)}
-                            </Link>
-                            <span className="text-xs text-[#6c7a93]">{holding.companyName}</span>
-                            {holding.isStale ? (
-                              <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-[#b27712]">
-                                Stale quote
-                              </span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3">{holding.quantity}</td>
-                        <td className="px-3 py-3">{formatter.format(holding.averagePrice)}</td>
-                        <td className="px-3 py-3">
-                          {holding.currentPrice == null ? "Unavailable" : formatter.format(holding.currentPrice)}
-                        </td>
-                        <td className="px-3 py-3">
-                          <ValuePill
-                            formatter={formatter}
-                            percent={holding.unrealizedProfitPercent}
-                            value={holding.unrealizedProfit}
-                          />
-                        </td>
-                        <td className="px-3 py-3">
-                          {holding.todayPnL == null ? (
-                            <span className="text-xs text-[#8a97ad]">Unavailable</span>
-                          ) : (
-                            <ValuePill
-                              formatter={formatter}
-                              percent={holding.todayPnLPercent}
-                              value={holding.todayPnL}
-                            />
-                          )}
-                        </td>
-                        <td className="rounded-r-2xl px-3 py-3">{formatPercent(holding.allocationPercent)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <EmptyState
-                description="Add your first buy transaction to open a stock position."
-                title="No active holdings yet"
-              />
-            )}
-          </Panel>
+          <StocksHoldingsTable
+            currencyCode={currencyCode}
+            emptyMessage="Add your first buy transaction to open a stock position."
+            holdings={initialData.holdings}
+            limit={5}
+            showViewAll={initialData.holdings.length > 0}
+            subtitle="Top 5 active holdings ranked by current value."
+            title="Active Holdings"
+          />
 
           <Panel title="Portfolio mix" subtitle="Allocation by stock">
             {stockAllocationData.length ? (
               <div className="space-y-5">
-                <div className="h-72">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {visibleStockAllocationData.map((entry) => (
+                    <div
+                      key={entry.label}
+                      className="flex min-w-0 items-center gap-2 rounded-[0.9rem] border border-[#e6edf7] bg-[#f8fbff] px-3 py-2"
+                      title={entry.label}
+                    >
+                      <span
+                        className="size-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: entry.color }}
+                      />
+                      <span className="min-w-0 truncate text-xs font-medium text-[#51627d]">
+                        {entry.label}
+                      </span>
+                    </div>
+                  ))}
+                  {hiddenStockAllocationCount ? (
+                    <button
+                      className="flex min-w-0 items-center justify-center rounded-[0.9rem] border border-dashed border-[#d6deea] bg-white px-3 py-2 text-xs font-semibold text-[#234067] transition hover:border-[#173d7a] hover:text-[#173d7a]"
+                      onClick={() => setIsPortfolioMixModalOpen(true)}
+                      type="button"
+                    >
+                      {hiddenStockAllocationCount} more
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="h-72 rounded-[24px] bg-[#f8fbff] p-3 shadow-[inset_0_0_0_1px_#e4edf7]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={stockAllocationData}
                         dataKey="value"
-                        innerRadius={70}
-                        outerRadius={105}
+                        innerRadius={0}
+                        outerRadius="86%"
                         label={renderPieLabel}
                         labelLine={false}
+                        paddingAngle={stockAllocationData.length > 1 ? 1 : 0}
+                        stroke="#ffffff"
+                        strokeWidth={2}
                       >
                         {stockAllocationData.map((entry) => (
                           <Cell key={entry.label} fill={entry.color} />
@@ -426,16 +439,6 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="space-y-2">
-                  {stockAllocationData.slice(0, 6).map((entry) => (
-                    <LegendRow
-                      key={entry.label}
-                      color={entry.color}
-                      label={entry.label}
-                      value={`${formatter.format(entry.value)} • ${formatPercent(entry.percentage)}`}
-                    />
-                  ))}
-                </div>
               </div>
             ) : (
               <EmptyState
@@ -446,69 +449,52 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
           </Panel>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-3">
+        <div className="grid gap-6 xl:grid-cols-2">
           <Panel title="Invested vs current" subtitle="Position-level comparison">
             {holdingsChartData.length ? (
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={holdingsChartData}>
-                    <defs>
-                      <linearGradient id="stocksCurrent" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor="#2563eb" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="#2563eb" stopOpacity={0.03} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid stroke="#e8eef7" strokeDasharray="4 4" />
-                    <XAxis dataKey="symbol" tick={{ fill: "#6c7a93", fontSize: 12 }} />
-                    <YAxis tick={{ fill: "#6c7a93", fontSize: 12 }} tickFormatter={(value) => compactNumber(value)} />
-                    <Tooltip
-                      content={(props) => (
-                        <AreaValueTooltip {...props} currencyFormatter={formatter} />
-                      )}
-                    />
-                    <Area
-                      dataKey="current"
-                      fill="url(#stocksCurrent)"
-                      stroke="#2563eb"
-                      strokeWidth={2}
-                      type="monotone"
-                    />
-                    <Area
-                      dataKey="invested"
-                      fill="#16a34a10"
-                      stroke="#16a34a"
-                      strokeWidth={2}
-                      type="monotone"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-4 text-sm text-[#5f6f89]">
+                  <LegendPill color="#2563eb" label="Current Value" />
+                  <LegendPill color="#16a34a" label="Invested Amount" />
+                </div>
+                <div className="h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={holdingsChartData}>
+                      <defs>
+                        <linearGradient id="stocksCurrent" x1="0" x2="0" y1="0" y2="1">
+                          <stop offset="0%" stopColor="#2563eb" stopOpacity={0.35} />
+                          <stop offset="100%" stopColor="#2563eb" stopOpacity={0.03} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#e8eef7" strokeDasharray="4 4" />
+                      <XAxis dataKey="symbol" tick={{ fill: "#6c7a93", fontSize: 12 }} />
+                      <YAxis tick={{ fill: "#6c7a93", fontSize: 12 }} tickFormatter={(value) => compactNumber(value)} />
+                      <Tooltip
+                        content={(props) => (
+                          <AreaValueTooltip {...props} currencyFormatter={formatter} />
+                        )}
+                      />
+                      <Area
+                        dataKey="current"
+                        fill="url(#stocksCurrent)"
+                        stroke="#2563eb"
+                        strokeWidth={2}
+                        type="monotone"
+                      />
+                      <Area
+                        dataKey="invested"
+                        fill="#16a34a10"
+                        stroke="#16a34a"
+                        strokeWidth={2}
+                        type="monotone"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             ) : (
               <EmptyState description="The comparison view will populate after your first position." title="No chart data" />
             )}
-          </Panel>
-
-          <Panel title="Sector exposure" subtitle="Grouped by sector">
-            <div className="space-y-3">
-              {sectorAllocationData.length ? (
-                sectorAllocationData.slice(0, 6).map((entry) => (
-                  <div key={entry.label} className="space-y-1">
-                    <div className="flex items-center justify-between text-sm text-[#213655]">
-                      <span>{entry.label}</span>
-                      <span>{formatPercent(entry.percentage)}</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-[#edf3fb]">
-                      <div
-                        className="h-2 rounded-full bg-[#173d7a]"
-                        style={{ width: `${Math.min(entry.percentage, 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <EmptyState description="Sector reporting appears when holdings have market metadata." title="No sector data" />
-              )}
-            </div>
           </Panel>
 
           <Panel title="Quick stats" subtitle="At-a-glance counts">
@@ -518,7 +504,11 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               <StatRow label="Total dividends" value={formatter.format(initialData.totalDividends)} />
               <StatRow
                 label="Today P&L"
-                value={initialData.totalTodayPnL == null ? "Unavailable" : formatter.format(initialData.totalTodayPnL)}
+                value={
+                  initialData.totalTodayPnL == null
+                    ? "Unavailable"
+                    : formatSignedCurrency(initialData.totalTodayPnL, formatter)
+                }
               />
               <StatRow label="Last updated" value={initialData.lastUpdatedAt ? formatDateTime(initialData.lastUpdatedAt) : "Not yet"} />
             </div>
@@ -526,7 +516,8 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
         </div>
 
         <Panel title="Transaction history" subtitle="Includes active and closed lifecycles">
-          <div className="mb-4 flex flex-wrap gap-2">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
             {(["ALL", "BUY", "SELL"] as const).map((filter) => (
               <button
                 key={filter}
@@ -535,14 +526,29 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                     ? "bg-[#173d7a] text-white"
                     : "border border-[#d5dfef] bg-white text-[#5f6f89]"
                 }`}
-                onClick={() => setTransactionFilter(filter)}
+                onClick={() => {
+                  setTransactionFilter(filter);
+                  setTransactionsPage(1);
+                }}
                 type="button"
               >
                 {filter}
               </button>
             ))}
+            </div>
+            {filteredTransactions.length ? (
+              <p className="text-sm font-medium text-[#5f6f89]">
+                Showing {(currentTransactionsPage - 1) * STOCK_TRANSACTIONS_PAGE_SIZE + 1}-
+                {Math.min(
+                  currentTransactionsPage * STOCK_TRANSACTIONS_PAGE_SIZE,
+                  filteredTransactions.length
+                )}{" "}
+                of {filteredTransactions.length}
+              </p>
+            ) : null}
           </div>
           {filteredTransactions.length ? (
+            <>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
@@ -557,7 +563,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredTransactions.map((transaction) => (
+                  {paginatedTransactions.map((transaction) => (
                     <tr key={transaction.id} className="border-b border-[#eef3fa] text-[#233a5f]">
                       <td className="px-3 py-3">{formatDate(transaction.transactionDate)}</td>
                       <td className="px-3 py-3">
@@ -592,6 +598,34 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                 </tbody>
               </table>
             </div>
+            {filteredTransactions.length > STOCK_TRANSACTIONS_PAGE_SIZE ? (
+              <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#e6edf7] pt-4">
+                <p className="text-sm text-[#5f6f89]">
+                  Page {currentTransactionsPage} of {totalTransactionPages}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="rounded-xl border border-[#d5dfef] bg-white px-3.5 py-2 text-sm font-medium text-[#234067] transition hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={currentTransactionsPage === 1}
+                    onClick={() => setTransactionsPage((page) => Math.max(1, page - 1))}
+                    type="button"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    className="rounded-xl border border-[#d5dfef] bg-white px-3.5 py-2 text-sm font-medium text-[#234067] transition hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={currentTransactionsPage === totalTransactionPages}
+                    onClick={() =>
+                      setTransactionsPage((page) => Math.min(totalTransactionPages, page + 1))
+                    }
+                    type="button"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            </>
           ) : (
             <EmptyState description="No transactions match the current filter." title="No history to show" />
           )}
@@ -687,6 +721,61 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
         </Modal>
       ) : null}
 
+      {isPortfolioMixModalOpen ? (
+        <Modal
+          maxWidthClassName="max-w-5xl"
+          title="All Stock Allocations"
+          onClose={() => setIsPortfolioMixModalOpen(false)}
+        >
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {stockAllocationData.map((entry) => (
+                <div
+                  key={entry.label}
+                  className="flex min-w-0 items-center gap-2 rounded-[0.9rem] border border-[#e6edf7] bg-[#f8fbff] px-3 py-2"
+                  title={entry.label}
+                >
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: entry.color }}
+                  />
+                  <span className="min-w-0 truncate text-xs font-medium text-[#51627d]">
+                    {entry.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="h-[28rem] rounded-[24px] border border-[#dce4f0] bg-[#f8fbff] p-4 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={stockAllocationData}
+                    dataKey="value"
+                    innerRadius={0}
+                    outerRadius="88%"
+                    label={renderPieLabel}
+                    labelLine={false}
+                    paddingAngle={stockAllocationData.length > 1 ? 1 : 0}
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                  >
+                    {stockAllocationData.map((entry) => (
+                      <Cell key={entry.label} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={(props) => (
+                      <PieValueTooltip {...props} currencyFormatter={formatter} />
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
       <style jsx global>{`
         .stocks-typeahead .form-control,
         .stocks-typeahead .rbt-input-main {
@@ -763,7 +852,13 @@ function formatPercent(value: number | null) {
     return "Unavailable";
   }
 
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  return value >= 0 ? `${value.toFixed(2)}%` : `(${Math.abs(value).toFixed(2)}%)`;
+}
+
+function formatSignedCurrency(value: number, formatter: Intl.NumberFormat) {
+  return value >= 0
+    ? formatter.format(value)
+    : `(${formatter.format(Math.abs(value))})`;
 }
 
 function displaySymbol(symbol: string, shortName?: string | null) {
@@ -782,11 +877,13 @@ function SummaryCard({
   value,
   icon,
   accent,
+  detail,
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
   accent: "blue" | "slate" | "green" | "red";
+  detail?: string;
 }) {
   const accentClass =
     accent === "blue"
@@ -794,14 +891,21 @@ function SummaryCard({
       : accent === "green"
         ? "bg-[#e9f7ef] text-[#0f7a56]"
         : accent === "red"
-          ? "bg-[#fff1f1] text-[#b23434]"
-          : "bg-[#eef2f7] text-[#44556f]";
+        ? "bg-[#fff1f1] text-[#b23434]"
+        : "bg-[#eef2f7] text-[#44556f]";
+  const valueClass =
+    accent === "green"
+      ? "text-[#0f7a56]"
+      : accent === "red"
+        ? "text-[#b23434]"
+        : "text-[#132842]";
 
   return (
     <div className="rounded-[24px] border border-[#dde5f1] bg-white p-4 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
       <div className={`mb-3 inline-flex rounded-2xl p-3 ${accentClass}`}>{icon}</div>
       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#7c8aa5]">{label}</p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-[#132842]">{value}</p>
+      <p className={`mt-2 text-2xl font-semibold tracking-tight ${valueClass}`}>{value}</p>
+      {detail ? <p className={`mt-3 text-sm ${valueClass}`}>{detail}</p> : null}
     </div>
   );
 }
@@ -823,6 +927,15 @@ function Panel({
       </div>
       {children}
     </section>
+  );
+}
+
+function LegendPill({ color, label }: { color: string; label: string }) {
+  return (
+    <div className="inline-flex items-center gap-2">
+      <span className="size-2.5 rounded-full" style={{ backgroundColor: color }} />
+      <span className="font-medium text-[#4f6079]">{label}</span>
+    </div>
   );
 }
 
@@ -848,14 +961,18 @@ function Modal({
   title,
   onClose,
   children,
+  maxWidthClassName = "max-w-2xl",
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  maxWidthClassName?: string;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#08101f]/55 px-4 py-6">
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[28px] border border-[#dde5f1] bg-white p-6 shadow-[0_28px_80px_rgba(8,16,31,0.35)]">
+      <div
+        className={`max-h-[90vh] w-full overflow-y-auto rounded-[28px] border border-[#dde5f1] bg-white p-6 shadow-[0_28px_80px_rgba(8,16,31,0.35)] ${maxWidthClassName}`}
+      >
         <div className="mb-5 flex items-center justify-between">
           <h3 className="text-xl font-semibold text-[#132842]">{title}</h3>
           <button className="rounded-full border border-[#d8e1ef] px-3 py-1.5 text-sm text-[#566883]" onClick={onClose} type="button">
@@ -879,18 +996,6 @@ function ModalActions({ isSubmitting, submitLabel }: { isSubmitting: boolean; su
         {isSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
         {submitLabel}
       </button>
-    </div>
-  );
-}
-
-function LegendRow({ color, label, value }: { color: string; label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <div className="flex items-center gap-2 text-[#213655]">
-        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
-        <span>{label}</span>
-      </div>
-      <span className="text-[#6d7d97]">{value}</span>
     </div>
   );
 }
@@ -931,7 +1036,9 @@ function PieValueTooltip({
   active,
   payload,
   currencyFormatter,
-}: any) {
+}: TooltipContentProps<ValueType, NameType> & {
+  currencyFormatter: Intl.NumberFormat;
+}) {
   if (!active || !payload?.length) {
     return null;
   }
@@ -952,16 +1059,18 @@ function AreaValueTooltip({
   payload,
   label,
   currencyFormatter,
-}: any) {
+}: TooltipContentProps<ValueType, NameType> & {
+  currencyFormatter: Intl.NumberFormat;
+}) {
   if (!active || !payload?.length) {
     return null;
   }
 
   return (
     <div className="rounded-2xl border border-[#dbe4f0] bg-white px-3 py-2 text-sm text-[#17304f] shadow-lg">
-      <div className="font-semibold">{label}</div>
-      {payload.map((entry: any) => (
-        <div key={entry.dataKey} className="flex items-center justify-between gap-4">
+      <div className="font-semibold">{label == null ? "" : String(label)}</div>
+      {payload.map((entry) => (
+        <div key={String(entry.dataKey)} className="flex items-center justify-between gap-4">
           <span className="capitalize text-[#6d7d97]">{String(entry.dataKey)}</span>
           <span>{currencyFormatter.format(Number(entry.value || 0))}</span>
         </div>

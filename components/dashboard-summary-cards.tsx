@@ -5,12 +5,14 @@ import type { DashboardAssetClassSummary, DashboardGoalsSummary, DashboardSummar
 export function DashboardSummaryCards({
   assetClasses,
   formatCurrency,
+  formatSignedCurrency,
   formatPercent,
   goalsSummary,
   summary,
 }: {
   assetClasses: DashboardAssetClassSummary[];
   formatCurrency: (value: number) => string;
+  formatSignedCurrency: (value: number) => string;
   formatPercent: (value: number | null) => string;
   goalsSummary: DashboardGoalsSummary;
   summary: DashboardSummary;
@@ -26,16 +28,13 @@ export function DashboardSummaryCards({
             <h2 className="text-4xl font-semibold tracking-tight text-[#10203a]">
               {formatCurrency(summary.totalCurrentWorth)}
             </h2>
-            <p className="max-w-2xl text-sm text-[#60708a]">
-              Your live overview across stocks, mutual funds, gold, and cash reserves.
-            </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard label="Invested" value={formatCurrency(summary.totalInvested)} />
             <MetricCard
               label="Gain / Loss"
               tone={summary.totalGainLoss >= 0 ? "positive" : "negative"}
-              value={`${formatCurrency(summary.totalGainLoss)} • ${formatPercent(
+              value={`${formatSignedCurrency(summary.totalGainLoss)} • ${formatPercent(
                 summary.totalGainLossPercent
               )}`}
             />
@@ -45,7 +44,7 @@ export function DashboardSummaryCards({
               value={
                 summary.todayGainLoss == null
                   ? "Unavailable"
-                  : `${formatCurrency(summary.todayGainLoss)} • ${formatPercent(
+                  : `${formatSignedCurrency(summary.todayGainLoss)} • ${formatPercent(
                       summary.todayGainLossPercent
                     )}`
               }
@@ -64,6 +63,7 @@ export function DashboardSummaryCards({
             key={assetClass.key}
             assetClass={assetClass}
             formatCurrency={formatCurrency}
+            formatSignedCurrency={formatSignedCurrency}
             formatPercent={formatPercent}
           />
         ))}
@@ -110,10 +110,12 @@ function MetricCard({
 function AssetCard({
   assetClass,
   formatCurrency,
+  formatSignedCurrency,
   formatPercent,
 }: {
   assetClass: DashboardAssetClassSummary;
   formatCurrency: (value: number) => string;
+  formatSignedCurrency: (value: number) => string;
   formatPercent: (value: number | null) => string;
 }) {
   const toneClass =
@@ -143,13 +145,13 @@ function AssetCard({
       <div className="mt-4 space-y-1.5 text-sm text-[#5e6e88]">
         <p>Invested: {formatCurrency(assetClass.investedAmount)}</p>
         <p className={toneClass}>
-          P&amp;L: {formatCurrency(assetClass.gainLoss)} • {formatPercent(assetClass.gainLossPercent)}
+          P&amp;L: {formatSignedCurrency(assetClass.gainLoss)} • {formatPercent(assetClass.gainLossPercent)}
         </p>
         <p>
           Today:{" "}
           {assetClass.todayGainLoss == null
             ? "Unavailable"
-            : `${formatCurrency(assetClass.todayGainLoss)} • ${formatPercent(
+            : `${formatSignedCurrency(assetClass.todayGainLoss)} • ${formatPercent(
                 assetClass.todayGainLossPercent
               )}`}
         </p>
