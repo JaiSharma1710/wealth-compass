@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import {
   Area,
   AreaChart,
@@ -25,11 +24,16 @@ import {
   PieChart as PieChartIcon,
   Plus,
   Wallet,
+  RefreshCw,
 } from "lucide-react";
 import { AsyncTypeahead, Highlighter } from "react-bootstrap-typeahead";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 
+import {
+  MarketSyncBatchReview,
+  type MarketSyncBatchSummary,
+} from "@/components/market-sync-batch-review";
 import { MutualFundsHoldingsTable } from "@/components/mutual-funds-holdings-table";
 import type {
   MutualFundDashboardData,
@@ -117,14 +121,15 @@ export function MutualFundsView({
   currencyCode,
   initialData,
 }: MutualFundsViewProps) {
-  const router = useRouter();
+  const [data, setData] = useState(initialData);
   const [activeModal, setActiveModal] = useState<"buy" | "sell" | null>(null);
+  const [marketSyncBatch, setMarketSyncBatch] = useState<MarketSyncBatchSummary | null>(null);
   const [isPending, startTransition] = useTransition();
   const [fundSearchOptions, setFundSearchOptions] = useState<MfSchemeOption[]>([]);
   const [isSearchingFunds, setIsSearchingFunds] = useState(false);
   const [selectedBuyFund, setSelectedBuyFund] = useState<MfSchemeOption[]>([]);
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
-  const firstHolding = initialData.holdings[0];
+  const firstHolding = data.holdings[0];
   const [selectedBuySchemeCode, setSelectedBuySchemeCode] = useState("");
   const [selectedSellSchemeCode, setSelectedSellSchemeCode] = useState(
     firstHolding ? String(firstHolding.schemeCode) : ""
@@ -141,23 +146,23 @@ export function MutualFundsView({
   );
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const monthTrendUp = initialData.monthOverMonthChangeAmount >= 0;
-  const overallProfitUp = initialData.totalProfitLossAmount >= 0;
-  const realizedProfitUp = initialData.totalRealizedProfitAmount >= 0;
-  const chartData = initialData.months;
+  const monthTrendUp = data.monthOverMonthChangeAmount >= 0;
+  const overallProfitUp = data.totalProfitLossAmount >= 0;
+  const realizedProfitUp = data.totalRealizedProfitAmount >= 0;
+  const chartData = data.months;
   const distributionData = useMemo(
     () =>
-      initialData.distribution.map((holding, index) => ({
+      data.distribution.map((holding, index) => ({
         ...holding,
         color: DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length],
       })),
-    [initialData.distribution]
+    [data.distribution]
   );
   const visibleDistributionData = distributionData.slice(0, 8);
   const hiddenDistributionCount = Math.max(distributionData.length - 8, 0);
   const [transactionsPage, setTransactionsPage] = useState(1);
   const topHolding = distributionData[0];
-  const effectiveSelectedHistorySchemeCode = initialData.holdings.some(
+  const effectiveSelectedHistorySchemeCode = data.holdings.some(
     (holding) => String(holding.schemeCode) === selectedHistorySchemeCode
   )
     ? selectedHistorySchemeCode
@@ -165,15 +170,15 @@ export function MutualFundsView({
       ? String(firstHolding.schemeCode)
       : "";
   const selectedHolding =
-    initialData.holdings.find(
+    data.holdings.find(
       (holding) => String(holding.schemeCode) === effectiveSelectedHistorySchemeCode
     ) || firstHolding;
   const totalTransactionPages = Math.max(
     1,
-    Math.ceil(initialData.recentTransactions.length / TRANSACTIONS_PAGE_SIZE)
+    Math.ceil(data.recentTransactions.length / TRANSACTIONS_PAGE_SIZE)
   );
   const currentTransactionsPage = Math.min(transactionsPage, totalTransactionPages);
-  const paginatedTransactions = initialData.recentTransactions.slice(
+  const paginatedTransactions = data.recentTransactions.slice(
     (currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE,
     currentTransactionsPage * TRANSACTIONS_PAGE_SIZE
   );
@@ -387,7 +392,7 @@ export function MutualFundsView({
     });
 
     const result = (await response.json().catch(() => null)) as
-      | { message?: string }
+      | { message?: string; dashboard?: MutualFundDashboardData }
       | null;
 
     if (!response.ok) {
@@ -401,15 +406,51 @@ export function MutualFundsView({
           : "Mutual fund sale saved.")
     );
 
+    if (result?.dashboard) {
+      setData(result.dashboard);
+    }
     closeModal();
-    startTransition(() => {
-      router.refresh();
+  }
+
+  async function reloadDashboard() {
+    const response = await fetch("/api/mutual-funds", { cache: "no-store" });
+    const result = (await response.json().catch(() => null)) as
+      | { dashboard?: MutualFundDashboardData; message?: string }
+      | null;
+
+    if (!response.ok || !result?.dashboard) {
+      throw new Error(result?.message || "Unable to reload mutual funds.");
+    }
+
+    setData(result.dashboard);
+  }
+
+  function handleRefreshNavs() {
+    startTransition(async () => {
+      try {
+        const response = await fetch("/api/market-sync/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assetType: "mutual_fund" }),
+        });
+        const result = (await response.json().catch(() => null)) as
+          | { batch?: MarketSyncBatchSummary; message?: string }
+          | null;
+
+        if (!response.ok || !result?.batch) {
+          throw new Error(result?.message || "Unable to refresh mutual fund NAVs.");
+        }
+
+        setMarketSyncBatch(result.batch);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to refresh mutual fund NAVs.");
+      }
     });
   }
 
   async function onBuy(values: BuyMfValues) {
     const previousFund = values.previousSchemeCode
-      ? initialData.previousFunds.find(
+      ? data.previousFunds.find(
           (item) => String(item.schemeCode) === values.previousSchemeCode
         )
       : null;
@@ -439,7 +480,7 @@ export function MutualFundsView({
   }
 
   async function onSell(values: SellMfValues) {
-    const holding = initialData.holdings.find(
+    const holding = data.holdings.find(
       (item) => String(item.schemeCode) === values.schemeCode
     );
 
@@ -483,10 +524,10 @@ export function MutualFundsView({
               <div>
                 <p className="text-sm font-medium text-neutral-500">Current Portfolio Value</p>
                 <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
-                  {formatter.format(initialData.totalPortfolioValue)}
+                  {formatter.format(data.totalPortfolioValue)}
                 </h2>
                 <p className="mt-2 text-sm text-neutral-500">
-                  Invested value: {formatter.format(initialData.totalInvestedAmount)}
+                  Invested value: {formatter.format(data.totalInvestedAmount)}
                 </p>
                 <div
                   className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
@@ -502,13 +543,22 @@ export function MutualFundsView({
                   )}
                   <span>
                     {monthTrendUp ? "+" : ""}
-                    {initialData.monthOverMonthChangePct.toFixed(1)}%
+                    {data.monthOverMonthChangePct.toFixed(1)}%
                   </span>
                   <span className="text-current/70">vs last month</span>
                 </div>
               </div>
 
               <div className="flex flex-col gap-2">
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isPending}
+                  onClick={handleRefreshNavs}
+                  type="button"
+                >
+                  <RefreshCw className={`size-4 ${isPending ? "animate-spin" : ""}`} />
+                  <span>Refresh NAVs</span>
+                </button>
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
                   onClick={() => {
@@ -524,7 +574,7 @@ export function MutualFundsView({
                 </button>
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!initialData.holdings.length}
+                  disabled={!data.holdings.length}
                   onClick={() => {
                     setSelectedSellSchemeCode(firstHolding ? String(firstHolding.schemeCode) : "");
                     setLatestModalNav(null);
@@ -544,17 +594,17 @@ export function MutualFundsView({
           <SummaryCard
             icon={<Landmark className="size-5 text-neutral-950" />}
             subtitle={`Realized ${realizedProfitUp ? "Profit" : "Loss"}`}
-            title={formatSignedCurrency(initialData.totalRealizedProfitAmount, formatter)}
+            title={formatSignedCurrency(data.totalRealizedProfitAmount, formatter)}
             tone={realizedProfitUp ? "positive" : "negative"}
-            detail={`${formatSignedPercent(initialData.totalRealizedProfitPct)} booked`}
+            detail={`${formatSignedPercent(data.totalRealizedProfitPct)} booked`}
           />
 
           <SummaryCard
             icon={<Wallet className="size-5 text-neutral-950" />}
             subtitle={`Unrealized ${overallProfitUp ? "Profit" : "Loss"}`}
-            title={formatSignedCurrency(initialData.totalProfitLossAmount, formatter)}
+            title={formatSignedCurrency(data.totalProfitLossAmount, formatter)}
             tone={overallProfitUp ? "positive" : "negative"}
-            detail={`${formatSignedPercent(initialData.totalProfitLossPct)} overall`}
+            detail={`${formatSignedPercent(data.totalProfitLossPct)} overall`}
           />
         </div>
 
@@ -796,11 +846,11 @@ export function MutualFundsView({
                   </label>
                   <select
                     className="h-[2.85rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                    disabled={!initialData.holdings.length}
+                    disabled={!data.holdings.length}
                     onChange={(event) => setSelectedHistorySchemeCode(event.target.value)}
                     value={effectiveSelectedHistorySchemeCode}
                   >
-                    {initialData.holdings.map((holding) => (
+                    {data.holdings.map((holding) => (
                       <option key={holding.schemeCode} value={holding.schemeCode}>
                         {holding.schemeName}
                       </option>
@@ -908,9 +958,9 @@ export function MutualFundsView({
         <MutualFundsHoldingsTable
           currencyCode={currencyCode}
           emptyMessage="No holdings yet. Add your first mutual fund purchase to start tracking."
-          holdings={initialData.topHoldings}
+          holdings={data.topHoldings}
           limit={5}
-          showViewAll={initialData.holdings.length > 0}
+          showViewAll={data.holdings.length > 0}
           subtitle="Top 5 holdings ranked by current value."
           title="Top 5 Holdings"
         />
@@ -925,20 +975,20 @@ export function MutualFundsView({
                 Latest mutual fund buy and sell activity saved in the portfolio.
               </p>
             </div>
-            {initialData.recentTransactions.length ? (
+            {data.recentTransactions.length ? (
               <p className="text-sm font-medium text-neutral-500 sm:text-right">
                 Showing {(currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE + 1}-
                 {Math.min(
                   currentTransactionsPage * TRANSACTIONS_PAGE_SIZE,
-                  initialData.recentTransactions.length
+                  data.recentTransactions.length
                 )}{" "}
-                of {initialData.recentTransactions.length}
+                of {data.recentTransactions.length}
               </p>
             ) : null}
           </div>
 
           <div className="mt-5 grid gap-3">
-            {initialData.recentTransactions.length ? (
+            {data.recentTransactions.length ? (
               paginatedTransactions.map((transaction) => {
                 const positive = transaction.transactionType === "buy";
 
@@ -999,7 +1049,7 @@ export function MutualFundsView({
             )}
           </div>
 
-          {initialData.recentTransactions.length > TRANSACTIONS_PAGE_SIZE ? (
+          {data.recentTransactions.length > TRANSACTIONS_PAGE_SIZE ? (
             <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#eef2f7] pt-4">
               <p className="text-sm text-neutral-500">
                 Page {currentTransactionsPage} of {totalTransactionPages}
@@ -1038,7 +1088,7 @@ export function MutualFundsView({
           <form className="mt-6 space-y-5" onSubmit={handleBuySubmit(onBuy)}>
             <div className="space-y-2">
               <span className="text-sm font-medium text-neutral-800">Mutual Fund</span>
-              {initialData.previousFunds.length ? (
+              {data.previousFunds.length ? (
                 <label className="block space-y-2">
                   <span className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">
                     Previous Fund
@@ -1065,7 +1115,7 @@ export function MutualFundsView({
                       setIsLatestModalNavLoading(true);
                       setSelectedBuySchemeCode(event.target.value);
 
-                      const matchingHolding = initialData.holdings.find(
+                      const matchingHolding = data.holdings.find(
                         (holding) => String(holding.schemeCode) === event.target.value
                       );
 
@@ -1078,7 +1128,7 @@ export function MutualFundsView({
                     }}
                   >
                     <option value="">Select from previous funds</option>
-                    {initialData.previousFunds.map((fund) => (
+                    {data.previousFunds.map((fund) => (
                       <option key={fund.schemeCode} value={fund.schemeCode}>
                         {fund.schemeName}
                       </option>
@@ -1243,7 +1293,7 @@ export function MutualFundsView({
                   setIsLatestModalNavLoading(true);
                   setSelectedSellSchemeCode(event.target.value);
 
-                  const matchingHolding = initialData.holdings.find(
+                  const matchingHolding = data.holdings.find(
                     (holding) => String(holding.schemeCode) === event.target.value
                   );
 
@@ -1255,7 +1305,7 @@ export function MutualFundsView({
                   }
                 }}
               >
-                {initialData.holdings.map((holding) => (
+                {data.holdings.map((holding) => (
                   <option key={holding.schemeCode} value={holding.schemeCode}>
                     {holding.schemeName}
                   </option>
@@ -1387,6 +1437,28 @@ export function MutualFundsView({
                 </PieChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        </ModalFrame>
+      ) : null}
+
+      {marketSyncBatch ? (
+        <ModalFrame
+          description="Approve selected NAV updates or approve all before syncing them to the database."
+          maxWidthClassName="max-w-6xl"
+          title="Approve refreshed NAVs"
+          onClose={() => setMarketSyncBatch(null)}
+        >
+          <div className="mt-6">
+            <MarketSyncBatchReview
+              batch={marketSyncBatch}
+              compact
+              currencyCode={currencyCode}
+              onBatchChange={setMarketSyncBatch}
+              onSynced={async () => {
+                await reloadDashboard();
+                setMarketSyncBatch(null);
+              }}
+            />
           </div>
         </ModalFrame>
       ) : null}

@@ -1,9 +1,13 @@
 import "server-only";
 
-import { Types } from "mongoose";
-
+import {
+  getDailyValueFreshness,
+  getHoldingDailyValueHistory,
+  getLatestHoldingValueMap,
+  getMonthlyAssetValueSummaries,
+  getTodayDateKey,
+} from "@/lib/daily-values";
 import { connectToDatabase } from "@/lib/mongodb";
-import { MutualFundMonthlySnapshot } from "@/lib/models/mutual-fund-monthly-snapshot";
 import { MutualFundTransaction } from "@/lib/models/mutual-fund-transaction";
 import type {
   MutualFundDashboardData,
@@ -63,10 +67,6 @@ function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-function endOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
-}
-
 function endOfDay(date: Date) {
   return new Date(
     date.getFullYear(),
@@ -77,25 +77,6 @@ function endOfDay(date: Date) {
     59,
     999,
   );
-}
-
-function getMonthStarts(count: number) {
-  const now = new Date();
-  const currentMonthStart = startOfMonth(now);
-
-  return Array.from({ length: count }, (_, index) => {
-    return new Date(
-      currentMonthStart.getFullYear(),
-      currentMonthStart.getMonth() - (count - 1 - index),
-      1,
-    );
-  });
-}
-
-function getMonthLabel(date: Date) {
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-  }).format(date);
 }
 
 function getMonthYearLabel(date: Date) {
@@ -118,25 +99,6 @@ function parseDateOnly(value: string) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function parseMfApiDate(value: string) {
-  const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value);
-
-  if (!match) {
-    return null;
-  }
-
-  const [, day, month, year] = match;
-  const parsed = new Date(Number(year), Number(month) - 1, Number(day));
-
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function formatApiDate(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate(),
-  ).padStart(2, "0")}`;
-}
-
 async function fetchLatestNavForScheme(schemeCode: number) {
   const response = await fetch(`https://api.mfapi.in/mf/${schemeCode}/latest`, {
     cache: "no-store",
@@ -155,37 +117,6 @@ async function fetchLatestNavForScheme(schemeCode: number) {
 
   const nav = Number(result?.data?.[0]?.nav || "");
   return Number.isFinite(nav) && nav > 0 ? roundCurrency(nav) : null;
-}
-
-async function fetchNavHistoryForScheme(
-  schemeCode: number,
-  startDate: string,
-  endDate: string,
-) {
-  const response = await fetch(
-    `https://api.mfapi.in/mf/${schemeCode}?startDate=${startDate}&endDate=${endDate}`,
-    {
-      cache: "no-store",
-      headers: {
-        accept: "application/json",
-      },
-    },
-  ).catch(() => null);
-
-  if (!response?.ok) {
-    return null;
-  }
-
-  return (await response.json().catch(() => null)) as {
-    meta?: {
-      scheme_name?: string;
-      scheme_code?: number;
-    };
-    data?: Array<{
-      date?: string;
-      nav?: string;
-    }>;
-  } | null;
 }
 
 function normalizeHoldings(holdings: Map<number, HoldingAccumulator>) {
@@ -289,19 +220,20 @@ function buildHoldingsFromTransactions(
   return buildLedgerFromTransactions(transactions, cutoffDate).holdings;
 }
 
-async function applyLiveCurrentNav(
+async function applyApprovedCurrentNav(
+  userId: string,
   holdings: ReturnType<typeof buildHoldingsFromTransactions>,
 ) {
-  const liveNavPairs = await Promise.all(
-    holdings.map(async (holding) => {
-      const latestNav = await fetchLatestNavForScheme(holding.schemeCode);
-      return [holding.schemeCode, latestNav] as const;
-    }),
+  const todayDate = getTodayDateKey();
+  const valueMap = await getLatestHoldingValueMap(
+    userId,
+    "mutual_fund",
+    holdings.map((holding) => String(holding.schemeCode))
   );
-  const liveNavMap = new Map(liveNavPairs);
 
   return holdings.map((holding) => {
-    const currentNav = liveNavMap.get(holding.schemeCode) || holding.currentNav;
+    const approvedValue = valueMap.get(String(holding.schemeCode)) || null;
+    const currentNav = approvedValue?.priceOrNav || holding.currentNav;
     const currentValue = roundCurrency(holding.units * currentNav);
     const profitLossAmount = roundCurrency(
       currentValue - holding.investedAmount,
@@ -316,12 +248,14 @@ async function applyLiveCurrentNav(
       currentValue,
       profitLossAmount,
       profitLossPct,
+      lastNavAt: getDailyValueFreshness(approvedValue, todayDate).lastSyncedAt,
+      isStale: getDailyValueFreshness(approvedValue, todayDate).isStale,
     };
   });
 }
 
 function mapHoldingsToSummary(
-  holdings: Awaited<ReturnType<typeof applyLiveCurrentNav>>,
+  holdings: Awaited<ReturnType<typeof applyApprovedCurrentNav>>,
 ) {
   const totalPortfolioValue = holdings.reduce(
     (sum, holding) => sum + holding.currentValue,
@@ -384,69 +318,6 @@ function buildPreviousFundOptions(
     .map(({ schemeCode, schemeName }) => ({ schemeCode, schemeName }));
 }
 
-async function ensureSnapshotsUpToDate(
-  userId: string,
-  transactions?: TransactionRecord[],
-) {
-  const allTransactions = transactions || (await loadTransactions(userId));
-
-  if (!allTransactions.length) {
-    return;
-  }
-
-  const firstMonth = startOfMonth(allTransactions[0].transactionDate);
-  const currentMonth = startOfMonth(new Date());
-  const objectUserId = new Types.ObjectId(userId);
-  const snapshotWrites = [];
-
-  for (
-    const monthCursor = new Date(firstMonth);
-    monthCursor <= currentMonth;
-    monthCursor.setMonth(monthCursor.getMonth() + 1)
-  ) {
-    const snapshotDate = new Date(monthCursor);
-    const holdings = buildHoldingsFromTransactions(
-      allTransactions,
-      endOfMonth(snapshotDate),
-    );
-    const totalInvested = roundCurrency(
-      holdings.reduce((sum, holding) => sum + holding.investedAmount, 0),
-    );
-    const totalValue = roundCurrency(
-      holdings.reduce((sum, holding) => sum + holding.currentValue, 0),
-    );
-
-    snapshotWrites.push({
-      updateOne: {
-        filter: {
-          userId: objectUserId,
-          monthKey: monthKey(snapshotDate),
-        },
-        update: {
-          $set: {
-            userId: objectUserId,
-            monthKey: monthKey(snapshotDate),
-            year: snapshotDate.getFullYear(),
-            month: snapshotDate.getMonth() + 1,
-            totalInvested,
-            totalValue,
-            distribution: holdings,
-          },
-        },
-        upsert: true,
-      },
-    });
-  }
-
-  if (snapshotWrites.length) {
-    await MutualFundMonthlySnapshot.bulkWrite(
-      snapshotWrites as Parameters<
-        typeof MutualFundMonthlySnapshot.bulkWrite
-      >[0],
-    );
-  }
-}
-
 export async function getMutualFundHoldingsOnDate(
   userId: string,
   schemeCode: number,
@@ -456,6 +327,11 @@ export async function getMutualFundHoldingsOnDate(
   const holdings = buildHoldingsFromTransactions(transactions, endOfDay(date));
 
   return holdings.find((holding) => holding.schemeCode === schemeCode) || null;
+}
+
+export async function getActiveMutualFundPositions(userId: string) {
+  const transactions = await loadTransactions(userId);
+  return buildHoldingsFromTransactions(transactions);
 }
 
 export async function saveMutualFundTransaction(
@@ -535,38 +411,30 @@ export async function saveMutualFundTransaction(
     transactionDate,
   });
 
-  const updatedTransactions = await loadTransactions(userId);
-  await ensureSnapshotsUpToDate(userId, updatedTransactions);
 }
 
 export async function getMutualFundNavHistory(
+  userId: string,
   schemeCode: number,
   fallbackSchemeName?: string,
 ): Promise<MutualFundNavHistory | null> {
-  const currentMonth = startOfMonth(new Date());
-  const startDate = new Date(
-    currentMonth.getFullYear(),
-    currentMonth.getMonth() - 11,
-    1,
-  );
-  const endDate = new Date();
-  const result = await fetchNavHistoryForScheme(
-    schemeCode,
-    formatApiDate(startDate),
-    formatApiDate(endDate),
-  );
+  const history = await getHoldingDailyValueHistory({
+    userId,
+    assetType: "mutual_fund",
+    assetKey: String(schemeCode),
+  });
 
-  if (!result?.data?.length) {
+  if (!history.length) {
     return null;
   }
 
   const latestPointByMonth = new Map<string, MutualFundNavHistoryPoint>();
 
-  for (const entry of result.data) {
-    const parsedDate = entry.date ? parseMfApiDate(entry.date) : null;
-    const nav = Number(entry.nav || "");
+  for (const entry of history) {
+    const parsedDate = new Date(`${entry.date}T00:00:00`);
+    const nav = entry.priceOrNav;
 
-    if (!parsedDate || !Number.isFinite(nav) || nav <= 0) {
+    if (!Number.isFinite(nav) || !nav || nav <= 0) {
       continue;
     }
 
@@ -582,6 +450,7 @@ export async function getMutualFundNavHistory(
     }
   }
 
+  const currentMonth = startOfMonth(new Date());
   const points = Array.from({ length: 12 }, (_, index) => {
     const monthStart = new Date(
       currentMonth.getFullYear(),
@@ -605,8 +474,7 @@ export async function getMutualFundNavHistory(
 
   return {
     schemeCode,
-    schemeName:
-      result.meta?.scheme_name || fallbackSchemeName || `Scheme ${schemeCode}`,
+    schemeName: fallbackSchemeName || `Scheme ${schemeCode}`,
     latestNav: lastPoint.nav,
     changeAmount,
     changePct,
@@ -622,46 +490,15 @@ export async function getMutualFundDashboard(
   userId: string,
 ): Promise<MutualFundDashboardData> {
   const transactions = await loadTransactions(userId);
-
-  if (transactions.length) {
-    await ensureSnapshotsUpToDate(userId, transactions);
-  }
-
-  const monthStarts = getMonthStarts(6);
-  const snapshots = await MutualFundMonthlySnapshot.find({
+  const months = (await getMonthlyAssetValueSummaries({
     userId,
-    monthKey: {
-      $in: monthStarts.map((date) => monthKey(date)),
-    },
-  })
-    .sort({ year: 1, month: 1 })
-    .lean();
-
-  const snapshotMap = new Map(
-    snapshots.map((snapshot) => [
-      snapshot.monthKey,
-      {
-        totalInvested: roundCurrency(snapshot.totalInvested),
-        totalValue: roundCurrency(snapshot.totalValue),
-      },
-    ]),
-  );
-
-  const months: MutualFundMonthSummary[] = monthStarts.map((start) => {
-    const key = monthKey(start);
-    const snapshot = snapshotMap.get(key);
-
-    return {
-      key,
-      label: getMonthLabel(start),
-      totalInvested: snapshot?.totalInvested || 0,
-      totalValue: snapshot?.totalValue || 0,
-    };
-  });
+    assetType: "mutual_fund",
+    count: 6,
+  })) satisfies MutualFundMonthSummary[];
 
   const ledger = buildLedgerFromTransactions(transactions);
-  const liveHoldings = await applyLiveCurrentNav(ledger.holdings);
-  const holdings = mapHoldingsToSummary(liveHoldings);
+  const approvedHoldings = await applyApprovedCurrentNav(userId, ledger.holdings);
+  const holdings = mapHoldingsToSummary(approvedHoldings);
   const previousFunds = buildPreviousFundOptions(transactions);
   const totalPortfolioValue = roundCurrency(
     holdings.reduce((sum, holding) => sum + holding.currentValue, 0),

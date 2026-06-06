@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { getStockChart } from "@/lib/services/yahoo-finance.service";
+import { getTokenFromRequest } from "@/lib/api-auth";
+import { verifyAuthToken } from "@/lib/auth";
+import { getStockDetail } from "@/lib/stocks";
 
 export const runtime = "nodejs";
 
@@ -8,13 +10,17 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ symbol: string }> }
 ) {
-  const { searchParams } = new URL(request.url);
-  const range = searchParams.get("range")?.trim() || "1mo";
+  const session = await verifyAuthToken(getTokenFromRequest(request));
+
+  if (!session?.sub) {
+    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
   const { symbol } = await context.params;
 
   try {
-    const chart = await getStockChart(symbol, range);
-    return NextResponse.json({ chart });
+    const detail = await getStockDetail(session.sub, symbol);
+    return NextResponse.json({ chart: detail.chart });
   } catch (error) {
     return NextResponse.json(
       {

@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { Bell, RefreshCw, X } from "lucide-react";
+import { Bell, X } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { DashboardAssetAllocation } from "@/components/dashboard-asset-allocation";
@@ -20,13 +19,11 @@ export function DashboardView({
   currencyCode: string;
   initialData: DashboardData;
 }) {
-  const router = useRouter();
-  const [data, setData] = useState(initialData);
+  const data = initialData;
   const [historyRange, setHistoryRange] = useState<DashboardHistoryRange>(initialData.historyRange);
   const [history, setHistory] = useState<DashboardHistoryPoint[]>(initialData.history);
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
   const [isHistoryLoading, startHistoryTransition] = useTransition();
-  const [isRefreshing, startRefreshTransition] = useTransition();
   const formatter = useMemo(
     () =>
       new Intl.NumberFormat("en-IN", {
@@ -101,34 +98,6 @@ export function DashboardView({
     });
   }
 
-  async function handleRefresh() {
-    startRefreshTransition(async () => {
-      try {
-        const response = await fetch("/api/dashboard/refresh", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        });
-        const result = (await response.json().catch(() => null)) as
-          | { dashboard?: DashboardData; message?: string }
-          | null;
-
-        if (!response.ok || !result?.dashboard) {
-          throw new Error(result?.message || "Could not refresh dashboard.");
-        }
-
-        setData(result.dashboard);
-        setHistoryRange(result.dashboard.historyRange);
-        setHistory(result.dashboard.history);
-        toast.success("Dashboard refreshed.");
-        router.refresh();
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not refresh dashboard.");
-      }
-    });
-  }
-
   return (
     <div className="h-full overflow-y-auto bg-[#f5f7fb]">
       <section className="flex min-h-full flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
@@ -158,15 +127,6 @@ export function DashboardView({
                     {data.insights.length}
                   </span>
                 ) : null}
-              </button>
-              <button
-                className="inline-flex items-center gap-2 rounded-full border border-[#d6e0ef] bg-white px-4 py-2 text-sm font-medium text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff]"
-                disabled={isRefreshing}
-                onClick={handleRefresh}
-                type="button"
-              >
-                <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-                Refresh Values
               </button>
             </div>
           </div>

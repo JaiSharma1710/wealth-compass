@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import {
   Area,
   AreaChart,
@@ -33,6 +32,10 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 
+import {
+  MarketSyncBatchReview,
+  type MarketSyncBatchSummary,
+} from "@/components/market-sync-batch-review";
 import { StocksHoldingsTable } from "@/components/stocks-holdings-table";
 import type { StockDashboardData, StockHoldingSummary, StockSearchResult } from "@/lib/stocks.types";
 
@@ -108,13 +111,14 @@ function renderPieLabel({
 }
 
 export function StocksView({ currencyCode, initialData }: StocksViewProps) {
-  const router = useRouter();
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
+  const [data, setData] = useState(initialData);
   const [activeModal, setActiveModal] = useState<"buy" | "sell" | null>(null);
+  const [marketSyncBatch, setMarketSyncBatch] = useState<MarketSyncBatchSummary | null>(null);
   const [isPortfolioMixModalOpen, setIsPortfolioMixModalOpen] = useState(false);
   const [selectedSearch, setSelectedSearch] = useState<StockSearchResult[]>([]);
   const [selectedHolding, setSelectedHolding] = useState<StockHoldingSummary | null>(
-    initialData.holdings[0] || null
+    data.holdings[0] || null
   );
   const [searchOptions, setSearchOptions] = useState<StockSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -138,18 +142,18 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
     },
   });
 
-  const stockAllocationData = initialData.stockAllocation.map((entry, index) => ({
+  const stockAllocationData = data.stockAllocation.map((entry, index) => ({
     ...entry,
     color: CHART_COLORS[index % CHART_COLORS.length],
   }));
   const visibleStockAllocationData = stockAllocationData.slice(0, 8);
   const hiddenStockAllocationCount = Math.max(stockAllocationData.length - 8, 0);
-  const holdingsChartData = initialData.holdings.map((holding) => ({
+  const holdingsChartData = data.holdings.map((holding) => ({
     symbol: holding.symbol,
     invested: holding.investedAmount,
     current: holding.currentValue,
   }));
-  const filteredTransactions = initialData.transactions.filter((transaction) =>
+  const filteredTransactions = data.transactions.filter((transaction) =>
     transactionFilter === "ALL" ? true : transaction.type === transactionFilter
   );
   const totalTransactionPages = Math.max(
@@ -214,15 +218,57 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const result = (await response.json().catch(() => null)) as { message?: string } | null;
+    const result = (await response.json().catch(() => null)) as
+      | { message?: string; dashboard?: StockDashboardData }
+      | null;
 
     if (!response.ok) {
       throw new Error(result?.message || "Unable to save stock transaction.");
     }
 
     toast.success(result?.message || "Stock transaction saved.");
+    if (result?.dashboard) {
+      setData(result.dashboard);
+      setSelectedHolding(result.dashboard.holdings[0] || null);
+    }
     closeModal();
-    startTransition(() => router.refresh());
+  }
+
+  async function reloadDashboard() {
+    const response = await fetch("/api/stocks", { cache: "no-store" });
+    const result = (await response.json().catch(() => null)) as
+      | { dashboard?: StockDashboardData; message?: string }
+      | null;
+
+    if (!response.ok || !result?.dashboard) {
+      throw new Error(result?.message || "Unable to reload stocks.");
+    }
+
+    setData(result.dashboard);
+    setSelectedHolding(result.dashboard.holdings[0] || null);
+  }
+
+  function handleRefreshPrices() {
+    startTransition(async () => {
+      try {
+        const response = await fetch("/api/market-sync/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assetType: "stock" }),
+        });
+        const result = (await response.json().catch(() => null)) as
+          | { batch?: MarketSyncBatchSummary; message?: string }
+          | null;
+
+        if (!response.ok || !result?.batch) {
+          throw new Error(result?.message || "Unable to refresh stock prices.");
+        }
+
+        setMarketSyncBatch(result.batch);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to refresh stock prices.");
+      }
+    });
   }
 
   async function submitBuy(values: BuyFormValues) {
@@ -287,7 +333,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               <button
                 className="inline-flex items-center gap-2 rounded-full border border-[#d6e0ef] bg-white px-4 py-2 text-sm font-medium text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff]"
                 disabled={isPending}
-                onClick={() => startTransition(() => router.refresh())}
+                onClick={handleRefreshPrices}
                 type="button"
               >
                 <RefreshCw className={`h-4 w-4 ${isPending ? "animate-spin" : ""}`} />
@@ -295,7 +341,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               </button>
             </div>
           </div>
-          {initialData.hasStaleQuotes ? (
+          {data.hasStaleQuotes ? (
             <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#f4d6a0] bg-[#fff8eb] px-4 py-3 text-sm text-[#8a6120]">
               <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
@@ -312,24 +358,24 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               <div>
                 <p className="text-sm font-medium text-[#6d7d97]">Current Portfolio Value</p>
                 <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10203a] sm:text-[2.35rem]">
-                  {formatter.format(initialData.totalCurrentValue)}
+                  {formatter.format(data.totalCurrentValue)}
                 </h2>
                 <p className="mt-2 text-sm text-[#6d7d97]">
-                  Invested value: {formatter.format(initialData.totalInvestedAmount)}
+                  Invested value: {formatter.format(data.totalInvestedAmount)}
                 </p>
                 <div
                   className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
-                    initialData.totalUnrealizedProfit >= 0
+                    data.totalUnrealizedProfit >= 0
                       ? "bg-emerald-50 text-emerald-700"
                       : "bg-rose-50 text-rose-700"
                   }`}
                 >
-                  {initialData.totalUnrealizedProfit >= 0 ? (
+                  {data.totalUnrealizedProfit >= 0 ? (
                     <ArrowUpRight className="size-4" />
                   ) : (
                     <ArrowDownRight className="size-4" />
                   )}
-                  <span>{formatPercent(initialData.totalUnrealizedProfitPercent)}</span>
+                  <span>{formatPercent(data.totalUnrealizedProfitPercent)}</span>
                   <span className="text-current/70">overall return</span>
                 </div>
               </div>
@@ -345,7 +391,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                 </button>
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!initialData.holdings.length}
+                  disabled={!data.holdings.length}
                   onClick={() => setActiveModal("sell")}
                   type="button"
                 >
@@ -358,16 +404,16 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
 
           <SummaryCard
             icon={<ArrowUpRight className="h-5 w-5" />}
-            label={`Unrealized ${initialData.totalUnrealizedProfit >= 0 ? "Profit" : "Loss"}`}
-            value={formatSignedCurrency(initialData.totalUnrealizedProfit, formatter)}
-            accent={initialData.totalUnrealizedProfit >= 0 ? "green" : "red"}
-            detail={`${formatPercent(initialData.totalUnrealizedProfitPercent)} overall`}
+            label={`Unrealized ${data.totalUnrealizedProfit >= 0 ? "Profit" : "Loss"}`}
+            value={formatSignedCurrency(data.totalUnrealizedProfit, formatter)}
+            accent={data.totalUnrealizedProfit >= 0 ? "green" : "red"}
+            detail={`${formatPercent(data.totalUnrealizedProfitPercent)} overall`}
           />
           <SummaryCard
             icon={<TrendingUp className="h-5 w-5" />}
-            label={`Realized ${initialData.totalRealizedProfit >= 0 ? "Profit" : "Loss"}`}
-            value={formatSignedCurrency(initialData.totalRealizedProfit, formatter)}
-            accent={initialData.totalRealizedProfit >= 0 ? "green" : "red"}
+            label={`Realized ${data.totalRealizedProfit >= 0 ? "Profit" : "Loss"}`}
+            value={formatSignedCurrency(data.totalRealizedProfit, formatter)}
+            accent={data.totalRealizedProfit >= 0 ? "green" : "red"}
             detail="Booked on completed sells"
           />
         </div>
@@ -376,9 +422,9 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
           <StocksHoldingsTable
             currencyCode={currencyCode}
             emptyMessage="Add your first buy transaction to open a stock position."
-            holdings={initialData.holdings}
+            holdings={data.holdings}
             limit={5}
-            showViewAll={initialData.holdings.length > 0}
+            showViewAll={data.holdings.length > 0}
             subtitle="Top 5 active holdings ranked by current value."
             title="Active Holdings"
           />
@@ -499,18 +545,18 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
 
           <Panel title="Quick stats" subtitle="At-a-glance counts">
             <div className="grid gap-3">
-              <StatRow label="Profitable holdings" value={String(initialData.profitableHoldingsCount)} />
-              <StatRow label="Loss-making holdings" value={String(initialData.lossHoldingsCount)} />
-              <StatRow label="Total dividends" value={formatter.format(initialData.totalDividends)} />
+              <StatRow label="Profitable holdings" value={String(data.profitableHoldingsCount)} />
+              <StatRow label="Loss-making holdings" value={String(data.lossHoldingsCount)} />
+              <StatRow label="Total dividends" value={formatter.format(data.totalDividends)} />
               <StatRow
                 label="Today P&L"
                 value={
-                  initialData.totalTodayPnL == null
+                  data.totalTodayPnL == null
                     ? "Unavailable"
-                    : formatSignedCurrency(initialData.totalTodayPnL, formatter)
+                    : formatSignedCurrency(data.totalTodayPnL, formatter)
                 }
               />
-              <StatRow label="Last updated" value={initialData.lastUpdatedAt ? formatDateTime(initialData.lastUpdatedAt) : "Not yet"} />
+              <StatRow label="Last updated" value={data.lastUpdatedAt ? formatDateTime(data.lastUpdatedAt) : "Not yet"} />
             </div>
           </Panel>
         </div>
@@ -691,13 +737,13 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               <select
                 className={inputClassName}
                 onChange={(event) => {
-                  const holding = initialData.holdings.find((entry) => entry.id === event.target.value) || null;
+                  const holding = data.holdings.find((entry) => entry.id === event.target.value) || null;
                   setSelectedHolding(holding);
                   sellForm.setValue("price", holding?.currentPrice ? String(holding.currentPrice) : "");
                 }}
                 value={selectedHolding?.id || ""}
               >
-                {initialData.holdings.map((holding) => (
+                {data.holdings.map((holding) => (
                   <option key={holding.id} value={holding.id}>
                     {holding.symbol} • {holding.quantity} shares
                   </option>
@@ -773,6 +819,25 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
               </ResponsiveContainer>
             </div>
           </div>
+        </Modal>
+      ) : null}
+
+      {marketSyncBatch ? (
+        <Modal
+          maxWidthClassName="max-w-6xl"
+          title="Approve refreshed stock prices"
+          onClose={() => setMarketSyncBatch(null)}
+        >
+          <MarketSyncBatchReview
+            batch={marketSyncBatch}
+            compact
+            currencyCode={currencyCode}
+            onBatchChange={setMarketSyncBatch}
+            onSynced={async () => {
+              await reloadDashboard();
+              setMarketSyncBatch(null);
+            }}
+          />
         </Modal>
       ) : null}
 

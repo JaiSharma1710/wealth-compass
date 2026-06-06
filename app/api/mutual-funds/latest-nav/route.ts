@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth";
-import { getMutualFundLatestNav } from "@/lib/mutual-funds";
+import { getLatestHoldingValueMap } from "@/lib/daily-values";
 
 export const runtime = "nodejs";
 
@@ -33,11 +33,14 @@ export async function GET(request: Request) {
     );
   }
 
-  const latestNav = await getMutualFundLatestNav(schemeCode);
+  const valueMap = await getLatestHoldingValueMap(session.sub, "mutual_fund", [
+    String(schemeCode),
+  ]);
+  const latestNav = valueMap.get(String(schemeCode))?.priceOrNav ?? null;
 
   if (latestNav == null) {
     return NextResponse.json(
-      { message: "Unable to load the latest NAV right now." },
+      { message: "No approved NAV is saved yet. Enter the NAV manually or refresh values first." },
       { status: 404 }
     );
   }

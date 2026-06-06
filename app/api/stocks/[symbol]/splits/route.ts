@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { getSplitHistory } from "@/lib/services/yahoo-finance.service";
-
 export const runtime = "nodejs";
 
 export async function GET(
@@ -10,15 +8,9 @@ export async function GET(
 ) {
   const { symbol } = await context.params;
 
-  try {
-    const splits = await getSplitHistory(symbol);
-    return NextResponse.json({ splits });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        message: error instanceof Error ? error.message : "Unable to load split history.",
-      },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json({
+    symbol,
+    splits: [],
+    message: "Splits are not fetched live in the DB-first portfolio view.",
+  });
 }

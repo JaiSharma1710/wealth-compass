@@ -34,6 +34,8 @@ export type MutualFundHoldingSummary = {
   profitLossAmount: number;
   profitLossPct: number;
   allocationPct: number;
+  lastNavAt?: string | null;
+  isStale?: boolean;
 };
 
 export type MutualFundOptionSummary = {

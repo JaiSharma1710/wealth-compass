@@ -13,7 +13,7 @@ const stockTransactionSchema = new Schema(
     holdingId: {
       type: Schema.Types.ObjectId,
       ref: "StockHolding",
-      required: true,
+      default: null,
       index: true,
     },
     symbol: {
@@ -138,7 +138,6 @@ export type StockTransactionDocument = InferSchemaType<typeof stockTransactionSc
 
 function hasCurrentStockTransactionSchema(existingModel: Model<StockTransactionDocument>) {
   return [
-    "holdingId",
     "brokerage",
     "taxes",
     "charges",

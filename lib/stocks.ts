@@ -2,62 +2,41 @@ import "server-only";
 
 import { Types } from "mongoose";
 
+import {
+  getDailyValueFreshness,
+  getHoldingDailyValueHistory,
+  getLatestHoldingValueMap,
+  getPreviousHoldingValueMap,
+  getTodayDateKey,
+  type DailyValueRecord,
+} from "@/lib/daily-values";
 import { connectToDatabase } from "@/lib/mongodb";
-import { StockHolding } from "@/lib/models/stock-holding";
 import { StockTransaction } from "@/lib/models/stock-transaction";
 import {
-  calculateAverageStockPrice,
   calculateBuyCashFlow,
-  calculateHoldingMetrics,
   calculateNextBuyLifecycleState,
   calculateNextSellLifecycleState,
   calculateSellSnapshot,
-  calculateTodayPnL,
-  calculateTodayPnLPercent,
   roundCurrency,
   roundPercent,
 } from "@/lib/stocks-calculations";
-import { getBulkQuotes, getStockDetails, getStockChart, getDividendHistory, getStockInsights, getStockNews, getSplitHistory } from "@/lib/services/yahoo-finance.service";
 import type {
   SaveStockBuyInput,
   SaveStockSellInput,
+  StockChartPoint,
   StockDashboardData,
   StockDetailData,
+  StockDistributionPoint,
   StockHoldingSummary,
   StockQuote,
   StockTransactionSummary,
 } from "@/lib/stocks.types";
 
-type StockHoldingRecord = {
-  _id: Types.ObjectId | string;
-  userId: Types.ObjectId | string;
-  symbol: string;
-  exchange: string;
-  companyName: string;
-  shortName?: string | null;
-  sector?: string | null;
-  industry?: string | null;
-  currency?: string | null;
-  quantity: number;
-  averagePrice: number;
-  investedAmount: number;
-  currentPrice?: number | null;
-  currentValue: number;
-  unrealizedProfit: number;
-  unrealizedProfitPercent: number;
-  realizedProfit: number;
-  totalDividends: number;
-  status: "ACTIVE" | "CLOSED";
-  openedAt: Date;
-  closedAt?: Date | null;
-  lastQuoteAt?: Date | null;
-  createdAt?: Date;
-  updatedAt?: Date;
-};
+const ACTIVE_EPSILON = 0.000001;
 
 type StockTransactionRecord = {
   _id: Types.ObjectId | string;
-  holdingId: Types.ObjectId | string;
+  holdingId?: Types.ObjectId | string | null;
   userId: Types.ObjectId | string;
   symbol: string;
   exchange: string;
@@ -82,9 +61,18 @@ type StockTransactionRecord = {
   createdAt?: Date;
 };
 
-type QuoteRefreshResult = {
-  quoteMap: Record<string, StockQuote | null>;
-  staleSymbols: Set<string>;
+export type StockPositionForValuation = {
+  symbol: string;
+  exchange: string;
+  companyName: string;
+  shortName: string;
+  sector: string | null;
+  industry: string | null;
+  currency: string | null;
+  quantity: number;
+  averagePrice: number;
+  investedAmount: number;
+  openedAt: Date;
 };
 
 function parseDateOnly(value: string) {
@@ -104,14 +92,10 @@ function normalizeNote(value?: string) {
   return String(value || "").trim();
 }
 
-function normalizeHoldingId(value: Types.ObjectId | string) {
-  return String(value);
-}
-
 function normalizeTransaction(record: StockTransactionRecord): StockTransactionSummary {
   return {
     id: String(record._id),
-    holdingId: normalizeHoldingId(record.holdingId),
+    holdingId: record.holdingId ? String(record.holdingId) : "",
     symbol: record.symbol,
     exchange: record.exchange,
     companyName: record.companyName,
@@ -193,146 +177,88 @@ function validateSellInput(input: SaveStockSellInput) {
   }
 }
 
-async function loadActiveHolding(userId: string, symbol: string) {
-  await connectToDatabase();
+function sortTransactionsAscending(transactions: StockTransactionRecord[]) {
+  return [...transactions].sort((left, right) => {
+    const byDate =
+      new Date(left.transactionDate).getTime() - new Date(right.transactionDate).getTime();
 
-  return (await StockHolding.findOne({
-    userId,
-    symbol,
-    status: "ACTIVE",
-  })) as unknown as StockHoldingRecord | null;
-}
-
-async function recomputeHoldingRealizedProfit(holdingId: string) {
-  const result = await StockTransaction.aggregate<{ total: number }>([
-    {
-      $match: {
-        holdingId: new Types.ObjectId(holdingId),
-        type: "SELL",
-      },
-    },
-    {
-      $group: {
-        _id: null,
-        total: { $sum: "$realizedProfitForSell" },
-      },
-    },
-  ]);
-
-  return roundCurrency(result[0]?.total || 0);
-}
-
-async function refreshActiveHoldingQuotes(holdings: StockHoldingRecord[]): Promise<QuoteRefreshResult> {
-  const symbols = [...new Set(holdings.map((holding) => holding.symbol))];
-
-  if (!symbols.length) {
-    return { quoteMap: {}, staleSymbols: new Set<string>() };
-  }
-
-  let quoteMap: Record<string, StockQuote | null> = {};
-  const staleSymbols = new Set<string>();
-
-  try {
-    quoteMap = await getBulkQuotes(symbols);
-  } catch {
-    for (const symbol of symbols) {
-      staleSymbols.add(symbol);
+    if (byDate !== 0) {
+      return byDate;
     }
 
-    return { quoteMap: {}, staleSymbols };
-  }
+    return new Date(left.createdAt || 0).getTime() - new Date(right.createdAt || 0).getTime();
+  });
+}
 
-  await Promise.all(
-    holdings.map(async (holding) => {
-      const quote = quoteMap[holding.symbol];
-      const currentPrice = quote?.regularMarketPrice ?? holding.currentPrice ?? null;
-      const isStale = quote?.regularMarketPrice == null;
+async function loadTransactions(userId: string, symbol?: string) {
+  await connectToDatabase();
 
-      if (isStale) {
-        staleSymbols.add(holding.symbol);
-      }
+  return (await StockTransaction.find({
+    userId,
+    ...(symbol ? { symbol } : {}),
+  })
+    .sort({ transactionDate: 1, createdAt: 1 })
+    .lean()) as StockTransactionRecord[];
+}
 
-      const metrics = calculateHoldingMetrics({
-        quantity: holding.quantity,
-        averagePrice: holding.averagePrice,
-        currentPrice,
+function buildPositionsFromTransactions(transactions: StockTransactionRecord[]) {
+  const positions = new Map<string, StockPositionForValuation>();
+
+  for (const transaction of sortTransactionsAscending(transactions)) {
+    const symbol = transaction.symbol;
+    const current = positions.get(symbol);
+
+    if (transaction.type === "BUY") {
+      const next = calculateNextBuyLifecycleState({
+        currentQuantity: current?.quantity || 0,
+        currentAveragePrice: current?.averagePrice || 0,
+        buyQuantity: transaction.quantity,
+        buyPrice: transaction.price,
       });
 
-      await StockHolding.updateOne(
-        { _id: holding._id },
-        {
-          $set: {
-            currentPrice,
-            currentValue: metrics.currentValue,
-            unrealizedProfit: metrics.unrealizedProfit,
-            unrealizedProfitPercent: metrics.unrealizedProfitPercent,
-            ...(isStale ? {} : { lastQuoteAt: new Date() }),
-          },
-        }
-      );
+      positions.set(symbol, {
+        symbol,
+        exchange: transaction.exchange,
+        companyName: transaction.companyName,
+        shortName: symbol,
+        sector: null,
+        industry: null,
+        currency: null,
+        quantity: next.quantity,
+        averagePrice: next.averagePrice,
+        investedAmount: next.investedAmount,
+        openedAt: current?.openedAt || transaction.transactionDate,
+      });
+      continue;
+    }
 
-      holding.currentPrice = currentPrice;
-      holding.currentValue = metrics.currentValue;
-      holding.unrealizedProfit = metrics.unrealizedProfit;
-      holding.unrealizedProfitPercent = metrics.unrealizedProfitPercent;
-      holding.lastQuoteAt = isStale ? holding.lastQuoteAt || null : new Date();
-    })
-  );
+    if (!current || transaction.quantity > current.quantity) {
+      continue;
+    }
 
-  return { quoteMap, staleSymbols };
+    const next = calculateNextSellLifecycleState({
+      currentQuantity: current.quantity,
+      currentAveragePrice: current.averagePrice,
+      sellQuantity: transaction.quantity,
+    });
+
+    if (next.remainingQuantity <= ACTIVE_EPSILON) {
+      positions.delete(symbol);
+      continue;
+    }
+
+    positions.set(symbol, {
+      ...current,
+      quantity: next.remainingQuantity,
+      averagePrice: next.averagePrice,
+      investedAmount: next.investedAmount,
+    });
+  }
+
+  return [...positions.values()].sort((left, right) => right.investedAmount - left.investedAmount);
 }
 
-function buildHoldingSummary(
-  holding: StockHoldingRecord,
-  quote: StockQuote | null,
-  totalCurrentValue: number,
-  staleSymbols: Set<string>
-): StockHoldingSummary {
-  const currentPrice = quote?.regularMarketPrice ?? holding.currentPrice ?? null;
-  const currentValue = currentPrice == null ? 0 : roundCurrency(currentPrice * holding.quantity);
-  const unrealizedProfit = roundCurrency(currentValue - holding.investedAmount);
-  const unrealizedProfitPercent =
-    holding.investedAmount > 0
-      ? roundPercent((unrealizedProfit / holding.investedAmount) * 100)
-      : 0;
-  const todayPnL = calculateTodayPnL({
-    quantity: holding.quantity,
-    regularMarketChange: quote?.regularMarketChange,
-    currentPrice,
-    regularMarketPreviousClose: quote?.regularMarketPreviousClose,
-  });
-  const todayPnLPercent = calculateTodayPnLPercent(todayPnL, currentValue);
-
-  return {
-    id: String(holding._id),
-    symbol: holding.symbol,
-    exchange: holding.exchange,
-    companyName: holding.companyName,
-    shortName: holding.shortName || holding.companyName,
-    sector: holding.sector || null,
-    industry: holding.industry || null,
-    currency: holding.currency || quote?.currency || null,
-    quantity: holding.quantity,
-    averagePrice: holding.averagePrice,
-    investedAmount: holding.investedAmount,
-    currentPrice,
-    currentValue,
-    unrealizedProfit,
-    unrealizedProfitPercent,
-    realizedProfit: holding.realizedProfit,
-    totalDividends: holding.totalDividends,
-    todayPnL,
-    todayPnLPercent,
-    allocationPercent: totalCurrentValue > 0 ? roundPercent((currentValue / totalCurrentValue) * 100) : 0,
-    status: holding.status,
-    openedAt: holding.openedAt.toISOString(),
-    closedAt: holding.closedAt?.toISOString() || null,
-    lastQuoteAt: holding.lastQuoteAt?.toISOString() || null,
-    isStale: staleSymbols.has(holding.symbol),
-  };
-}
-
-function buildDistribution(entries: Array<{ label: string; value: number }>) {
+function buildDistribution(entries: Array<{ label: string; value: number }>): StockDistributionPoint[] {
   const total = entries.reduce((sum, entry) => sum + entry.value, 0);
 
   return entries
@@ -345,15 +271,88 @@ function buildDistribution(entries: Array<{ label: string; value: number }>) {
     .sort((left, right) => right.value - left.value);
 }
 
-async function loadTransactions(userId: string, symbol?: string) {
-  await connectToDatabase();
+function buildQuoteFromDailyValue(
+  position: StockPositionForValuation,
+  value: DailyValueRecord | null
+): StockQuote {
+  return {
+    symbol: position.symbol,
+    exchange: position.exchange,
+    currency: position.currency,
+    shortName: position.shortName,
+    longName: position.companyName,
+    quoteType: null,
+    regularMarketPrice: value?.priceOrNav ?? null,
+    regularMarketChange: null,
+    regularMarketChangePercent: null,
+    regularMarketPreviousClose: null,
+    marketState: null,
+    isMarketOpen: false,
+    sector: position.sector,
+    industry: position.industry,
+  };
+}
 
-  return (await StockTransaction.find({
-    userId,
-    ...(symbol ? { symbol } : {}),
-  })
-    .sort({ transactionDate: -1, createdAt: -1 })
-    .lean()) as StockTransactionRecord[];
+function buildHoldingSummary(input: {
+  position: StockPositionForValuation;
+  value: DailyValueRecord | null;
+  previousValue: DailyValueRecord | null;
+  totalCurrentValue: number;
+  todayDate: string;
+}): StockHoldingSummary {
+  const currentPrice = input.value?.priceOrNav ?? null;
+  const currentValue =
+    currentPrice == null ? 0 : roundCurrency(currentPrice * input.position.quantity);
+  const unrealizedProfit = roundCurrency(currentValue - input.position.investedAmount);
+  const unrealizedProfitPercent =
+    input.position.investedAmount > 0
+      ? roundPercent((unrealizedProfit / input.position.investedAmount) * 100)
+      : 0;
+  const { isStale, lastSyncedAt } = getDailyValueFreshness(input.value, input.todayDate);
+  const todayPnL =
+    input.value && input.value.date === input.todayDate && input.previousValue
+      ? roundCurrency(currentValue - input.previousValue.currentValue)
+      : null;
+  const todayPnLPercent =
+    todayPnL != null && currentValue - todayPnL > 0
+      ? roundPercent((todayPnL / (currentValue - todayPnL)) * 100)
+      : null;
+
+  return {
+    id: input.position.symbol,
+    symbol: input.position.symbol,
+    exchange: input.position.exchange,
+    companyName: input.position.companyName,
+    shortName: input.position.shortName || input.position.companyName,
+    sector: input.position.sector,
+    industry: input.position.industry,
+    currency: input.position.currency,
+    quantity: input.position.quantity,
+    averagePrice: input.position.averagePrice,
+    investedAmount: input.position.investedAmount,
+    currentPrice,
+    currentValue,
+    unrealizedProfit,
+    unrealizedProfitPercent,
+    realizedProfit: 0,
+    totalDividends: 0,
+    todayPnL,
+    todayPnLPercent,
+    allocationPercent:
+      input.totalCurrentValue > 0
+        ? roundPercent((currentValue / input.totalCurrentValue) * 100)
+        : 0,
+    status: "ACTIVE",
+    openedAt: input.position.openedAt.toISOString(),
+    closedAt: null,
+    lastQuoteAt: lastSyncedAt,
+    isStale,
+  };
+}
+
+export async function getActiveStockPositions(userId: string) {
+  const transactions = await loadTransactions(userId);
+  return buildPositionsFromTransactions(transactions);
 }
 
 export async function saveStockBuyTransaction(userId: string, input: SaveStockBuyInput) {
@@ -366,76 +365,6 @@ export async function saveStockBuyTransaction(userId: string, input: SaveStockBu
 
   await connectToDatabase();
 
-  let holding = await loadActiveHolding(userId, input.symbol);
-
-  if (!holding) {
-    const metrics = calculateHoldingMetrics({
-      quantity: input.quantity,
-      averagePrice: input.price,
-      currentPrice: null,
-    });
-
-    const createdHolding = await StockHolding.create({
-      userId,
-      symbol: input.symbol,
-      exchange: input.exchange,
-      companyName: input.companyName,
-      shortName: input.shortName,
-      sector: input.sector || null,
-      industry: input.industry || null,
-      currency: input.currency || null,
-      quantity: input.quantity,
-      averagePrice: input.price,
-      investedAmount: metrics.investedAmount,
-      currentPrice: null,
-      currentValue: 0,
-      unrealizedProfit: -metrics.investedAmount,
-      unrealizedProfitPercent: -100,
-      realizedProfit: 0,
-      totalDividends: 0,
-      status: "ACTIVE",
-      openedAt: transactionDate,
-      closedAt: null,
-      lastQuoteAt: null,
-    });
-
-    holding = createdHolding.toObject() as StockHoldingRecord;
-  } else {
-    const nextState = calculateNextBuyLifecycleState({
-      currentQuantity: holding.quantity,
-      currentAveragePrice: holding.averagePrice,
-      buyQuantity: input.quantity,
-      buyPrice: input.price,
-    });
-    const metrics = calculateHoldingMetrics({
-      quantity: nextState.quantity,
-      averagePrice: nextState.averagePrice,
-      currentPrice: holding.currentPrice ?? null,
-    });
-
-    await StockHolding.updateOne(
-      { _id: holding._id },
-      {
-        $set: {
-          exchange: input.exchange,
-          companyName: input.companyName,
-          shortName: input.shortName,
-          sector: input.sector || holding.sector || null,
-          industry: input.industry || holding.industry || null,
-          currency: input.currency || holding.currency || null,
-          quantity: nextState.quantity,
-          averagePrice: nextState.averagePrice,
-          investedAmount: nextState.investedAmount,
-          currentValue: metrics.currentValue,
-          unrealizedProfit: metrics.unrealizedProfit,
-          unrealizedProfitPercent: metrics.unrealizedProfitPercent,
-          status: "ACTIVE",
-          closedAt: null,
-        },
-      }
-    );
-  }
-
   const cashFlow = calculateBuyCashFlow({
     quantity: input.quantity,
     price: input.price,
@@ -446,10 +375,10 @@ export async function saveStockBuyTransaction(userId: string, input: SaveStockBu
 
   await StockTransaction.create({
     userId,
-    holdingId: holding._id,
-    symbol: input.symbol,
-    exchange: input.exchange,
-    companyName: input.companyName,
+    holdingId: null,
+    symbol: input.symbol.trim().toUpperCase(),
+    exchange: input.exchange.trim(),
+    companyName: input.companyName.trim(),
     type: "BUY",
     quantity: input.quantity,
     price: input.price,
@@ -472,8 +401,10 @@ export async function saveStockSellTransaction(userId: string, input: SaveStockS
     throw new Error("Transaction date is required.");
   }
 
-  await connectToDatabase();
-  const holding = await loadActiveHolding(userId, input.symbol);
+  const transactions = await loadTransactions(userId);
+  const holding = buildPositionsFromTransactions(transactions).find(
+    (position) => position.symbol === input.symbol.trim().toUpperCase()
+  );
 
   if (!holding) {
     throw new Error("No active holding found for this symbol.");
@@ -491,20 +422,12 @@ export async function saveStockSellTransaction(userId: string, input: SaveStockS
     taxes: input.taxes,
     charges: input.charges,
   });
-  const nextState = calculateNextSellLifecycleState({
-    currentQuantity: holding.quantity,
-    currentAveragePrice: holding.averagePrice,
-    sellQuantity: input.quantity,
-  });
-  const nextMetrics = calculateHoldingMetrics({
-    quantity: nextState.remainingQuantity,
-    averagePrice: nextState.averagePrice,
-    currentPrice: holding.currentPrice ?? null,
-  });
+
+  await connectToDatabase();
 
   await StockTransaction.create({
     userId,
-    holdingId: holding._id,
+    holdingId: null,
     symbol: holding.symbol,
     exchange: holding.exchange,
     companyName: holding.companyName,
@@ -523,71 +446,46 @@ export async function saveStockSellTransaction(userId: string, input: SaveStockS
     realizedProfitForSell: snapshot.realizedProfitForSell,
     transactionDate,
   });
-
-  const realizedProfit = await recomputeHoldingRealizedProfit(String(holding._id));
-
-  if (nextState.remainingQuantity === 0) {
-    await StockHolding.updateOne(
-      { _id: holding._id },
-      {
-        $set: {
-          quantity: 0,
-          investedAmount: 0,
-          currentValue: 0,
-          unrealizedProfit: 0,
-          unrealizedProfitPercent: 0,
-          realizedProfit,
-          status: "CLOSED",
-          closedAt: transactionDate,
-        },
-      }
-    );
-
-    return;
-  }
-
-  await StockHolding.updateOne(
-    { _id: holding._id },
-    {
-      $set: {
-        quantity: nextState.remainingQuantity,
-        averagePrice: nextState.averagePrice,
-        investedAmount: nextState.investedAmount,
-        currentValue: nextMetrics.currentValue,
-        unrealizedProfit: nextMetrics.unrealizedProfit,
-        unrealizedProfitPercent: nextMetrics.unrealizedProfitPercent,
-        realizedProfit,
-      },
-    }
-  );
 }
 
 export async function getStockDashboard(userId: string): Promise<StockDashboardData> {
-  await connectToDatabase();
-
-  const [activeHoldings, allTransactions] = await Promise.all([
-    StockHolding.find({ userId, status: "ACTIVE" })
-      .sort({ updatedAt: -1 })
-      .lean() as Promise<StockHoldingRecord[]>,
-    loadTransactions(userId),
+  const transactions = await loadTransactions(userId);
+  const positions = buildPositionsFromTransactions(transactions);
+  const symbols = positions.map((position) => position.symbol);
+  const todayDate = getTodayDateKey();
+  const [valueMap, previousValueMap] = await Promise.all([
+    getLatestHoldingValueMap(userId, "stock", symbols),
+    getPreviousHoldingValueMap(userId, "stock", symbols, todayDate),
   ]);
-
-  const { quoteMap, staleSymbols } = await refreshActiveHoldingQuotes(activeHoldings);
   const totalCurrentValue = roundCurrency(
-    activeHoldings.reduce((sum, holding) => {
-      const currentPrice = quoteMap[holding.symbol]?.regularMarketPrice ?? holding.currentPrice ?? null;
-      return sum + (currentPrice == null ? 0 : currentPrice * holding.quantity);
+    positions.reduce((sum, position) => {
+      const price = valueMap.get(position.symbol)?.priceOrNav ?? null;
+      return sum + (price == null ? 0 : price * position.quantity);
     }, 0)
   );
-
-  const holdings = activeHoldings
-    .map((holding) => buildHoldingSummary(holding, quoteMap[holding.symbol] || null, totalCurrentValue, staleSymbols))
+  const holdings = positions
+    .map((position) =>
+      buildHoldingSummary({
+        position,
+        value: valueMap.get(position.symbol) || null,
+        previousValue: previousValueMap.get(position.symbol) || null,
+        totalCurrentValue,
+        todayDate,
+      })
+    )
     .sort((left, right) => right.currentValue - left.currentValue);
-
-  const totalInvestedAmount = roundCurrency(holdings.reduce((sum, holding) => sum + holding.investedAmount, 0));
-  const totalUnrealizedProfit = roundCurrency(holdings.reduce((sum, holding) => sum + holding.unrealizedProfit, 0));
+  const totalInvestedAmount = roundCurrency(
+    holdings.reduce((sum, holding) => sum + holding.investedAmount, 0)
+  );
+  const totalUnrealizedProfit = roundCurrency(
+    holdings.reduce((sum, holding) => sum + holding.unrealizedProfit, 0)
+  );
+  const totalUnrealizedProfitPercent =
+    totalInvestedAmount > 0
+      ? roundPercent((totalUnrealizedProfit / totalInvestedAmount) * 100)
+      : 0;
   const totalRealizedProfit = roundCurrency(
-    allTransactions.reduce((sum, transaction) => sum + (transaction.realizedProfitForSell || 0), 0)
+    transactions.reduce((sum, transaction) => sum + (transaction.realizedProfitForSell || 0), 0)
   );
   const totalTodayPnLRaw = holdings.reduce((sum, holding) => sum + (holding.todayPnL || 0), 0);
   const hasAnyTodayPnL = holdings.some((holding) => holding.todayPnL != null);
@@ -596,28 +494,21 @@ export async function getStockDashboard(userId: string): Promise<StockDashboardD
     totalTodayPnL != null && totalCurrentValue - totalTodayPnL > 0
       ? roundPercent((totalTodayPnL / (totalCurrentValue - totalTodayPnL)) * 100)
       : null;
-  const totalDividends = roundCurrency(holdings.reduce((sum, holding) => sum + holding.totalDividends, 0));
-  const totalUnrealizedProfitPercent =
-    totalInvestedAmount > 0 ? roundPercent((totalUnrealizedProfit / totalInvestedAmount) * 100) : 0;
-
   const stockAllocation = buildDistribution(
     holdings.map((holding) => ({ label: holding.symbol, value: holding.currentValue }))
   );
-  const sectorTotals = new Map<string, number>();
-
-  for (const holding of holdings) {
-    const label = holding.sector || "Unclassified";
-    sectorTotals.set(label, (sectorTotals.get(label) || 0) + holding.currentValue);
-  }
-
   const sectorAllocation = buildDistribution(
-    [...sectorTotals.entries()].map(([label, value]) => ({ label, value }))
+    holdings.map((holding) => ({
+      label: holding.sector || "Unclassified",
+      value: holding.currentValue,
+    }))
   );
-  const lastUpdatedAt = holdings
-    .map((holding) => holding.lastQuoteAt)
-    .filter((value): value is string => Boolean(value))
-    .sort()
-    .at(-1) || null;
+  const lastUpdatedAt =
+    holdings
+      .map((holding) => holding.lastQuoteAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) || null;
 
   return {
     totalInvestedAmount,
@@ -627,140 +518,121 @@ export async function getStockDashboard(userId: string): Promise<StockDashboardD
     totalRealizedProfit,
     totalTodayPnL,
     totalTodayPnLPercent,
-    totalDividends,
+    totalDividends: 0,
     holdingCount: holdings.length,
     profitableHoldingsCount: holdings.filter((holding) => holding.unrealizedProfit >= 0).length,
     lossHoldingsCount: holdings.filter((holding) => holding.unrealizedProfit < 0).length,
-    hasStaleQuotes: staleSymbols.size > 0,
+    hasStaleQuotes: holdings.some((holding) => holding.isStale),
     lastUpdatedAt,
     holdings,
     stockAllocation,
     sectorAllocation,
-    topGainers: [...holdings].sort((a, b) => b.unrealizedProfitPercent - a.unrealizedProfitPercent).slice(0, 5),
-    topLosers: [...holdings].sort((a, b) => a.unrealizedProfitPercent - b.unrealizedProfitPercent).slice(0, 5),
-    transactions: allTransactions.map(normalizeTransaction),
+    topGainers: [...holdings]
+      .sort((a, b) => b.unrealizedProfitPercent - a.unrealizedProfitPercent)
+      .slice(0, 5),
+    topLosers: [...holdings]
+      .sort((a, b) => a.unrealizedProfitPercent - b.unrealizedProfitPercent)
+      .slice(0, 5),
+    transactions: [...transactions].reverse().map(normalizeTransaction),
   };
 }
 
 export async function getStockTransactions(userId: string, symbol?: string) {
   const transactions = await loadTransactions(userId, symbol);
-  return transactions.map(normalizeTransaction);
+  return [...transactions].reverse().map(normalizeTransaction);
+}
+
+function mapDailyValuesToChart(values: DailyValueRecord[]): StockChartPoint[] {
+  return values.map((value) => ({
+    timestamp: value.syncedAt,
+    dateLabel: new Date(`${value.date}T00:00:00`).toLocaleDateString("en-IN", {
+      month: "short",
+      day: "numeric",
+      year: "2-digit",
+    }),
+    close: value.priceOrNav || 0,
+    open: null,
+    high: null,
+    low: null,
+    volume: null,
+  }));
 }
 
 export async function getStockDetail(userId: string, symbol: string): Promise<StockDetailData> {
-  await connectToDatabase();
-
-  const [activeHoldingRecord, transactions, detailsResult, chart, dividends, splits, news, insights] =
-    await Promise.all([
-      StockHolding.findOne({ userId, symbol, status: "ACTIVE" }).lean() as Promise<StockHoldingRecord | null>,
-      getStockTransactions(userId, symbol),
-      getStockDetails(symbol).catch(() => null),
-      getStockChart(symbol, "1mo").catch(() => []),
-      getDividendHistory(symbol).catch(() => []),
-      getSplitHistory(symbol).catch(() => []),
-      getStockNews(symbol).catch(() => []),
-      getStockInsights(symbol).catch(() => null),
-    ]);
-
-  const activeHolding = activeHoldingRecord
-    ? buildHoldingSummary(activeHoldingRecord, null, activeHoldingRecord.currentValue || 0, new Set())
-    : null;
-  const quote = activeHoldingRecord
-    ? {
-        symbol,
-        exchange: activeHoldingRecord.exchange,
-        currency: activeHoldingRecord.currency || null,
-        shortName: activeHoldingRecord.shortName || null,
-        longName: activeHoldingRecord.companyName,
-        quoteType: null,
-        regularMarketPrice: activeHoldingRecord.currentPrice ?? null,
-        regularMarketChange: null,
-        regularMarketChangePercent: null,
-        regularMarketPreviousClose: null,
-        marketState: null,
-        isMarketOpen: false,
-        sector: activeHoldingRecord.sector || null,
-        industry: activeHoldingRecord.industry || null,
-      }
+  const normalizedSymbol = decodeURIComponent(symbol).trim().toUpperCase();
+  const [dashboard, transactions, chartValues] = await Promise.all([
+    getStockDashboard(userId),
+    getStockTransactions(userId, normalizedSymbol),
+    getHoldingDailyValueHistory({
+      userId,
+      assetType: "stock",
+      assetKey: normalizedSymbol,
+      limit: 370,
+    }),
+  ]);
+  const activeHolding =
+    dashboard.holdings.find((holding) => holding.symbol === normalizedSymbol) || null;
+  const latestValue = chartValues.at(-1) || null;
+  const quote = activeHolding
+    ? buildQuoteFromDailyValue(
+        {
+          symbol: activeHolding.symbol,
+          exchange: activeHolding.exchange,
+          companyName: activeHolding.companyName,
+          shortName: activeHolding.shortName,
+          sector: activeHolding.sector,
+          industry: activeHolding.industry,
+          currency: activeHolding.currency,
+          quantity: activeHolding.quantity,
+          averagePrice: activeHolding.averagePrice,
+          investedAmount: activeHolding.investedAmount,
+          openedAt: new Date(activeHolding.openedAt),
+        },
+        latestValue
+      )
     : null;
 
   return {
-    symbol,
+    symbol: normalizedSymbol,
     quote,
     activeHolding,
     transactions,
-    chart,
-    dividends,
-    splits,
-    news,
-    insights,
+    chart: mapDailyValuesToChart(chartValues),
+    dividends: [],
+    splits: [],
+    news: [],
+    insights: null,
     details: {
-      companyName:
-        detailsResult?.price?.longName ||
-        detailsResult?.price?.shortName ||
-        activeHoldingRecord?.companyName ||
-        null,
-      shortName:
-        detailsResult?.price?.shortName ||
-        activeHoldingRecord?.shortName ||
-        null,
-      sector:
-        detailsResult?.summaryProfile?.sector ||
-        activeHoldingRecord?.sector ||
-        null,
-      industry:
-        detailsResult?.summaryProfile?.industry ||
-        activeHoldingRecord?.industry ||
-        null,
-      currency:
-        detailsResult?.price?.currency ||
-        activeHoldingRecord?.currency ||
-        null,
-      exchange:
-        detailsResult?.price?.exchangeName ||
-        activeHoldingRecord?.exchange ||
-        null,
-      longBusinessSummary: detailsResult?.summaryProfile?.longBusinessSummary || null,
-      website: detailsResult?.summaryProfile?.website || null,
-      marketCap:
-        typeof detailsResult?.price?.marketCap === "number" ? detailsResult.price.marketCap : null,
-      trailingPE:
-        typeof detailsResult?.summaryDetail?.trailingPE === "number"
-          ? detailsResult.summaryDetail.trailingPE
-          : null,
-      forwardPE:
-        typeof detailsResult?.summaryDetail?.forwardPE === "number"
-          ? detailsResult.summaryDetail.forwardPE
-          : null,
-      dividendYield:
-        typeof detailsResult?.summaryDetail?.dividendYield === "number"
-          ? detailsResult.summaryDetail.dividendYield
-          : null,
-      fiftyTwoWeekHigh:
-        typeof detailsResult?.summaryDetail?.fiftyTwoWeekHigh === "number"
-          ? detailsResult.summaryDetail.fiftyTwoWeekHigh
-          : null,
-      fiftyTwoWeekLow:
-        typeof detailsResult?.summaryDetail?.fiftyTwoWeekLow === "number"
-          ? detailsResult.summaryDetail.fiftyTwoWeekLow
-          : null,
+      companyName: activeHolding?.companyName || null,
+      shortName: activeHolding?.shortName || null,
+      sector: activeHolding?.sector || null,
+      industry: activeHolding?.industry || null,
+      currency: activeHolding?.currency || null,
+      exchange: activeHolding?.exchange || null,
+      longBusinessSummary: null,
+      website: null,
+      marketCap: null,
+      trailingPE: null,
+      forwardPE: null,
+      dividendYield: null,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
     },
-    isStale: activeHoldingRecord?.lastQuoteAt == null,
-    lastUpdatedAt: activeHoldingRecord?.lastQuoteAt?.toISOString() || null,
+    isStale: activeHolding?.isStale ?? true,
+    lastUpdatedAt: activeHolding?.lastQuoteAt || null,
   };
 }
 
 export async function getActiveHoldingSymbols(userId: string) {
-  await connectToDatabase();
+  const positions = await getActiveStockPositions(userId);
 
-  const holdings = (await StockHolding.find({ userId, status: "ACTIVE" })
-    .select({ symbol: 1, companyName: 1 })
-    .lean()) as Array<{ symbol: string; companyName: string }>;
-
-  return holdings;
+  return positions.map((position) => ({
+    symbol: position.symbol,
+    companyName: position.companyName,
+  }));
 }
 
 export async function validateActiveHoldingSymbol(userId: string, symbol: string) {
-  const holding = await loadActiveHolding(userId, symbol);
-  return Boolean(holding);
+  const positions = await getActiveStockPositions(userId);
+  return positions.some((position) => position.symbol === symbol.trim().toUpperCase());
 }

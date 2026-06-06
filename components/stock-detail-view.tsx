@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Area,
   AreaChart,
@@ -12,7 +11,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { ArrowLeft, CircleAlert, RefreshCw } from "lucide-react";
+import type { TooltipContentProps } from "recharts";
+import type {
+  NameType,
+  ValueType,
+} from "recharts/types/component/DefaultTooltipContent";
+import { ArrowLeft, CircleAlert } from "lucide-react";
 import toast from "react-hot-toast";
 
 import type { StockChartPoint, StockDetailData } from "@/lib/stocks.types";
@@ -48,7 +52,6 @@ function formatDateTime(value: string) {
 }
 
 export function StockDetailView({ currencyCode, initialData }: StockDetailViewProps) {
-  const router = useRouter();
   const formatter = useMemo(
     () =>
       new Intl.NumberFormat("en-IN", {
@@ -120,14 +123,6 @@ export function StockDetailView({ currencyCode, initialData }: StockDetailViewPr
                 {initialData.details.sector ? ` • ${initialData.details.sector}` : ""}
               </p>
             </div>
-            <button
-              className="inline-flex items-center gap-2 rounded-full border border-[#d6e0ef] bg-white px-4 py-2 text-sm font-medium text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff]"
-              onClick={() => router.refresh()}
-              type="button"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </button>
           </div>
           {initialData.isStale ? (
             <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#f4d6a0] bg-[#fff8eb] px-4 py-3 text-sm text-[#8a6120]">
@@ -341,7 +336,7 @@ function DetailChartTooltip({
   payload,
   label,
   currencyFormatter,
-}: any) {
+}: TooltipContentProps<ValueType, NameType> & { currencyFormatter: Intl.NumberFormat }) {
   if (!active || !payload?.length) {
     return null;
   }

@@ -24,16 +24,16 @@ vi.mock("@/lib/goals", () => ({
   getGoalsPageData: vi.fn(),
 }));
 
-vi.mock("@/lib/models/portfolio-snapshot", () => ({
-  PortfolioSnapshot: {
-    updateOne: vi.fn(),
-    find: vi.fn(),
-  },
+vi.mock("@/lib/daily-values", () => ({
+  getPortfolioHistoryFromDailyValues: vi.fn(),
+  getTodayDateKey: vi.fn(() => "2026-05-30"),
+  getTotalAssetKey: vi.fn(() => "total"),
+  upsertDailyValues: vi.fn(),
 }));
 
 import { createOrUpdateTodayPortfolioSnapshot, getDashboard, getPortfolioHistory } from "@/lib/dashboard";
-import { PortfolioSnapshot } from "@/lib/models/portfolio-snapshot";
 import { getCashReserveDashboard } from "@/lib/cash-reserves";
+import { getPortfolioHistoryFromDailyValues, upsertDailyValues } from "@/lib/daily-values";
 import { getGoldDashboard } from "@/lib/gold";
 import { getGoalsPageData } from "@/lib/goals";
 import { getMutualFundDashboard } from "@/lib/mutual-funds";
@@ -278,21 +278,17 @@ describe("dashboard domain", () => {
     vi.mocked(getGoldDashboard).mockResolvedValue(createGoldDashboard());
     vi.mocked(getCashReserveDashboard).mockResolvedValue(createCashDashboard());
     vi.mocked(getGoalsPageData).mockResolvedValue(createGoalsPageData());
-    vi.mocked(PortfolioSnapshot.updateOne).mockResolvedValue({ acknowledged: true } as never);
-    vi.mocked(PortfolioSnapshot.find).mockReturnValue({
-      sort: vi.fn().mockReturnValue({
-        lean: vi.fn().mockResolvedValue([
-          {
-            date: "2026-05-30",
-            totalCurrentWorth: 420,
-            stocksValue: 100,
-            mutualFundsValue: 200,
-            goldValue: 50,
-            cashValue: 70,
-          },
-        ]),
-      }),
-    } as never);
+    vi.mocked(upsertDailyValues).mockResolvedValue(undefined);
+    vi.mocked(getPortfolioHistoryFromDailyValues).mockResolvedValue([
+      {
+        date: "2026-05-30",
+        totalValue: 420,
+        stocksValue: 100,
+        mutualFundsValue: 200,
+        goldValue: 50,
+        cashValue: 70,
+      },
+    ]);
   });
 
   it("calculates total current worth, invested amount, gain/loss, and avoids goal double counting", async () => {
@@ -419,45 +415,32 @@ describe("dashboard domain", () => {
       goalsSavedValue: 300,
     });
 
-    expect(PortfolioSnapshot.updateOne).toHaveBeenCalledTimes(1);
-    const [query, update, options] = vi.mocked(PortfolioSnapshot.updateOne).mock.calls[0];
-    expect(String(query.userId)).toBe(mockUser.id);
-    expect(query.date).toBe("2026-05-30");
-    expect(update.$set.totalCurrentWorth).toBe(420);
-    expect(options).toEqual({ upsert: true });
+    expect(upsertDailyValues).toHaveBeenCalledTimes(1);
+    const [inputs] = vi.mocked(upsertDailyValues).mock.calls[0];
+    expect(inputs).toHaveLength(5);
+    expect(inputs.find((input) => input.scope === "portfolio")?.currentValue).toBe(420);
+    expect(inputs.find((input) => input.assetType === "stock")?.currentValue).toBe(100);
   });
 
   it("filters history by range", async () => {
-    vi.mocked(PortfolioSnapshot.find).mockReturnValue({
-      sort: vi.fn().mockReturnValue({
-        lean: vi.fn().mockResolvedValue([
-          {
-            date: "2026-04-01",
-            totalCurrentWorth: 200,
-            stocksValue: 50,
-            mutualFundsValue: 100,
-            goldValue: 20,
-            cashValue: 30,
-          },
-          {
-            date: "2026-05-25",
-            totalCurrentWorth: 410,
-            stocksValue: 100,
-            mutualFundsValue: 190,
-            goldValue: 50,
-            cashValue: 70,
-          },
-          {
-            date: "2026-05-30",
-            totalCurrentWorth: 420,
-            stocksValue: 100,
-            mutualFundsValue: 200,
-            goldValue: 50,
-            cashValue: 70,
-          },
-        ]),
-      }),
-    } as never);
+    vi.mocked(getPortfolioHistoryFromDailyValues).mockResolvedValue([
+      {
+        date: "2026-05-25",
+        totalValue: 410,
+        stocksValue: 100,
+        mutualFundsValue: 190,
+        goldValue: 50,
+        cashValue: 70,
+      },
+      {
+        date: "2026-05-30",
+        totalValue: 420,
+        stocksValue: 100,
+        mutualFundsValue: 200,
+        goldValue: 50,
+        cashValue: 70,
+      },
+    ]);
 
     const history = await getPortfolioHistory(mockUser.id, "1W");
 
@@ -468,8 +451,6 @@ describe("dashboard domain", () => {
   it("keeps history queries isolated by userId", async () => {
     await getPortfolioHistory(mockUser.id, "ALL");
 
-    expect(PortfolioSnapshot.find).toHaveBeenCalledTimes(1);
-    const [query] = vi.mocked(PortfolioSnapshot.find).mock.calls[0];
-    expect(String(query.userId)).toBe(mockUser.id);
+    expect(getPortfolioHistoryFromDailyValues).toHaveBeenCalledWith(mockUser.id, "ALL");
   });
 });

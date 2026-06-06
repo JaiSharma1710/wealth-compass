@@ -1,7 +1,5 @@
 import "server-only";
 
-import { Types } from "mongoose";
-
 import type { SafeUser } from "@/lib/auth";
 import { getCashReserveDashboard } from "@/lib/cash-reserves";
 import {
@@ -9,14 +7,17 @@ import {
   buildDashboardInsights,
   calculateAllocationPercent,
   calculateGainLossPercent,
-  filterHistoryByRange,
-  getDateKeyInTimeZone,
   roundCurrency,
   roundPercent,
   sortRecentActivity,
 } from "@/lib/dashboard-calculations";
+import {
+  getPortfolioHistoryFromDailyValues,
+  getTodayDateKey,
+  getTotalAssetKey,
+  upsertDailyValues,
+} from "@/lib/daily-values";
 import type {
-  DashboardAllocationPoint,
   DashboardAssetClassSummary,
   DashboardData,
   DashboardGoalsSummary,
@@ -27,12 +28,9 @@ import type {
 } from "@/lib/dashboard.types";
 import { getGoalsPageData } from "@/lib/goals";
 import { getGoldDashboard } from "@/lib/gold";
-import { connectToDatabase } from "@/lib/mongodb";
-import { PortfolioSnapshot } from "@/lib/models/portfolio-snapshot";
 import { getMutualFundDashboard } from "@/lib/mutual-funds";
 import { getStockDashboard } from "@/lib/stocks";
 
-const DASHBOARD_TIMEZONE = "Asia/Kolkata";
 const DEFAULT_HISTORY_RANGE: DashboardHistoryRange = "1M";
 
 type DashboardSnapshotPayload = {
@@ -46,21 +44,6 @@ type DashboardSnapshotPayload = {
   cashValue: number;
   goalsSavedValue: number | null;
 };
-
-function getAssetClassLabel(key: DashboardAssetClassSummary["key"]) {
-  switch (key) {
-    case "stocks":
-      return "Stocks";
-    case "mutualFunds":
-      return "Mutual Funds";
-    case "gold":
-      return "Gold";
-    case "cash":
-      return "Cash and Reserves";
-    default:
-      return "Asset";
-  }
-}
 
 function buildGoalsSummary(goalsPageData: Awaited<ReturnType<typeof getGoalsPageData>>): DashboardGoalsSummary {
   const activeGoals = goalsPageData.goals.filter((goal) => !goal.isCompleted);
@@ -313,76 +296,134 @@ function buildSummaryFromAssetClasses(assetClasses: DashboardAssetClassSummary[]
   };
 }
 
-function buildSnapshotPayload(
-  summary: DashboardSummary,
-  assetClasses: DashboardAssetClassSummary[],
-  goalsSummary: DashboardGoalsSummary
-): DashboardSnapshotPayload {
-  const stocksAsset = assetClasses.find((assetClass) => assetClass.key === "stocks");
-  const mutualFundsAsset = assetClasses.find(
-    (assetClass) => assetClass.key === "mutualFunds"
-  );
-  const goldAsset = assetClasses.find((assetClass) => assetClass.key === "gold");
-  const cashAsset = assetClasses.find((assetClass) => assetClass.key === "cash");
-
-  return {
-    totalCurrentWorth: summary.totalCurrentWorth,
-    totalInvested: summary.totalInvested,
-    totalGainLoss: summary.totalGainLoss,
-    totalGainLossPercent: summary.totalGainLossPercent,
-    stocksValue: stocksAsset?.currentValue || 0,
-    mutualFundsValue: mutualFundsAsset?.currentValue || 0,
-    goldValue: goldAsset?.currentValue || 0,
-    cashValue: cashAsset?.currentValue || 0,
-    goalsSavedValue: goalsSummary.totalSavedAmount,
-  };
-}
-
 export async function createOrUpdateTodayPortfolioSnapshot(
   userId: string,
   snapshot: DashboardSnapshotPayload
 ) {
-  await connectToDatabase();
-  const date = getDateKeyInTimeZone(new Date(), DASHBOARD_TIMEZONE);
+  const date = getTodayDateKey();
+  const totalAssetKey = getTotalAssetKey();
 
-  await PortfolioSnapshot.updateOne(
+  await upsertDailyValues([
     {
-      userId: new Types.ObjectId(userId),
+      userId,
       date,
+      scope: "asset",
+      assetType: "stock",
+      assetKey: totalAssetKey,
+      assetLabel: "Stocks",
+      investedAmount: 0,
+      currentValue: snapshot.stocksValue,
+      source: "system",
     },
     {
-      $set: {
-        ...snapshot,
-      },
+      userId,
+      date,
+      scope: "asset",
+      assetType: "mutual_fund",
+      assetKey: totalAssetKey,
+      assetLabel: "Mutual Funds",
+      investedAmount: 0,
+      currentValue: snapshot.mutualFundsValue,
+      source: "system",
     },
     {
-      upsert: true,
-    }
-  );
+      userId,
+      date,
+      scope: "asset",
+      assetType: "gold",
+      assetKey: totalAssetKey,
+      assetLabel: "Gold",
+      investedAmount: 0,
+      currentValue: snapshot.goldValue,
+      source: "system",
+    },
+    {
+      userId,
+      date,
+      scope: "asset",
+      assetType: "cash",
+      assetKey: totalAssetKey,
+      assetLabel: "Cash and Reserves",
+      investedAmount: snapshot.cashValue,
+      currentValue: snapshot.cashValue,
+      source: "system",
+    },
+    {
+      userId,
+      date,
+      scope: "portfolio",
+      assetType: "portfolio",
+      assetKey: totalAssetKey,
+      assetLabel: "Total Portfolio",
+      investedAmount: snapshot.totalInvested,
+      currentValue: snapshot.totalCurrentWorth,
+      gainLoss: snapshot.totalGainLoss,
+      source: "system",
+    },
+  ]);
 }
 
 export async function getPortfolioHistory(
   userId: string,
   range: DashboardHistoryRange
 ): Promise<DashboardHistoryPoint[]> {
-  await connectToDatabase();
+  return getPortfolioHistoryFromDailyValues(userId, range);
+}
 
-  const snapshots = await PortfolioSnapshot.find({
-    userId: new Types.ObjectId(userId),
-  })
-    .sort({ date: 1 })
-    .lean();
+export async function saveDailyPortfolioValuesForUser(userId: string) {
+  const [stocks, mutualFunds, gold, cash] = await Promise.all([
+    getStockDashboard(userId),
+    getMutualFundDashboard(userId),
+    getGoldDashboard(userId),
+    getCashReserveDashboard(userId),
+  ]);
+  const assetClasses = createAssetClassSummaries({
+    stocks,
+    mutualFunds,
+    gold,
+    cash,
+  });
+  const summary = buildSummaryFromAssetClasses(assetClasses);
+  const totalAssetKey = getTotalAssetKey();
+  const date = getTodayDateKey();
 
-  const history = snapshots.map((snapshot) => ({
-    date: snapshot.date,
-    totalValue: roundCurrency(snapshot.totalCurrentWorth),
-    stocksValue: roundCurrency(snapshot.stocksValue),
-    mutualFundsValue: roundCurrency(snapshot.mutualFundsValue),
-    goldValue: roundCurrency(snapshot.goldValue),
-    cashValue: roundCurrency(snapshot.cashValue),
-  }));
+  await upsertDailyValues([
+    ...assetClasses.map((assetClass) => ({
+      userId,
+      date,
+      scope: "asset" as const,
+      assetType:
+        assetClass.key === "mutualFunds"
+          ? ("mutual_fund" as const)
+          : assetClass.key === "stocks"
+            ? ("stock" as const)
+            : assetClass.key,
+      assetKey: totalAssetKey,
+      assetLabel: assetClass.label,
+      investedAmount: assetClass.investedAmount,
+      currentValue: assetClass.currentValue,
+      gainLoss: assetClass.gainLoss,
+      source: "system" as const,
+    })),
+    {
+      userId,
+      date,
+      scope: "portfolio" as const,
+      assetType: "portfolio" as const,
+      assetKey: totalAssetKey,
+      assetLabel: "Total Portfolio",
+      investedAmount: summary.totalInvested,
+      currentValue: summary.totalCurrentWorth,
+      gainLoss: summary.totalGainLoss,
+      source: "system" as const,
+    },
+  ]);
 
-  return filterHistoryByRange(history, range);
+  return {
+    date,
+    summary,
+    assetClasses,
+  };
 }
 
 export async function getDashboard(user: SafeUser): Promise<DashboardData> {
@@ -402,11 +443,6 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
   });
   const summary = buildSummaryFromAssetClasses(assetClasses);
   const goalsSummary = buildGoalsSummary(goals);
-
-  await createOrUpdateTodayPortfolioSnapshot(
-    user.id,
-    buildSnapshotPayload(summary, assetClasses, goalsSummary)
-  );
 
   const history = await getPortfolioHistory(user.id, DEFAULT_HISTORY_RANGE);
   const allocation = attachAllocationPercent(

@@ -1,15 +1,8 @@
-import { StocksView } from "@/components/stocks-view";
+import { StocksPageClient } from "@/components/stocks-page-client";
 import { requireCurrentUser } from "@/lib/auth";
-import { getStockDashboard } from "@/lib/stocks";
 
 export default async function StocksPage() {
   const user = await requireCurrentUser();
-  const dashboard = await getStockDashboard(user.id);
 
-  return (
-    <StocksView
-      currencyCode={user.profile.currency}
-      initialData={dashboard}
-    />
-  );
+  return <StocksPageClient currencyCode={user.profile.currency} />;
 }

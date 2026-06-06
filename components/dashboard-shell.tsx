@@ -7,6 +7,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Coins,
   Compass,
+  ClipboardCheck,
   LayoutDashboard,
   Landmark,
   LineChart,
@@ -30,6 +31,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/market-approvals", icon: ClipboardCheck, label: "Market Approvals" },
   { href: "/stocks", icon: LineChart, label: "Stocks" },
   { href: "/mutual-funds", icon: PieChart, label: "Mutual Funds" },
   { href: "/gold", icon: Coins, label: "Gold" },

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const history = await getMutualFundNavHistory(schemeCode, schemeName);
+  const history = await getMutualFundNavHistory(session.sub, schemeCode, schemeName);
 
   if (!history) {
     return NextResponse.json(

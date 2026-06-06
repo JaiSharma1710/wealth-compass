@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { getStockInsights } from "@/lib/services/yahoo-finance.service";
-
 export const runtime = "nodejs";
 
 export async function GET(
@@ -10,15 +8,9 @@ export async function GET(
 ) {
   const { symbol } = await context.params;
 
-  try {
-    const insights = await getStockInsights(symbol);
-    return NextResponse.json({ insights });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        message: error instanceof Error ? error.message : "Unable to load insights.",
-      },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json({
+    symbol,
+    insights: null,
+    message: "Stock insights are not fetched live in the DB-first portfolio view.",
+  });
 }
