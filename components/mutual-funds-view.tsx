@@ -2,12 +2,10 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
-  Area,
-  AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -15,7 +13,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { PieLabelRenderProps, TooltipContentProps } from "recharts";
+import type { PieLabelRenderProps } from "recharts";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -37,7 +35,6 @@ import {
 import { MutualFundsHoldingsTable } from "@/components/mutual-funds-holdings-table";
 import type {
   MutualFundDashboardData,
-  MutualFundNavHistory,
   MutualFundOptionSummary,
   MutualFundTransactionType,
 } from "@/lib/mutual-funds.types";
@@ -138,14 +135,6 @@ export function MutualFundsView({
   const [latestModalNav, setLatestModalNav] = useState<number | null>(null);
   const [isLatestModalNavLoading, setIsLatestModalNavLoading] = useState(false);
   const [latestModalNavError, setLatestModalNavError] = useState<string | null>(null);
-  const [selectedHistorySchemeCode, setSelectedHistorySchemeCode] = useState(
-    firstHolding ? String(firstHolding.schemeCode) : ""
-  );
-  const [selectedFundHistory, setSelectedFundHistory] = useState<MutualFundNavHistory | null>(
-    null
-  );
-  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
   const monthTrendUp = data.monthOverMonthChangeAmount >= 0;
   const overallProfitUp = data.totalProfitLossAmount >= 0;
   const realizedProfitUp = data.totalRealizedProfitAmount >= 0;
@@ -160,19 +149,18 @@ export function MutualFundsView({
   );
   const visibleDistributionData = distributionData.slice(0, 8);
   const hiddenDistributionCount = Math.max(distributionData.length - 8, 0);
+  const bestPerformingFunds = useMemo(
+    () =>
+      [...data.holdings]
+        .sort((left, right) => {
+          const byProfitPct = right.profitLossPct - left.profitLossPct;
+          return byProfitPct || right.profitLossAmount - left.profitLossAmount;
+        })
+        .slice(0, 5),
+    [data.holdings]
+  );
   const [transactionsPage, setTransactionsPage] = useState(1);
   const topHolding = distributionData[0];
-  const effectiveSelectedHistorySchemeCode = data.holdings.some(
-    (holding) => String(holding.schemeCode) === selectedHistorySchemeCode
-  )
-    ? selectedHistorySchemeCode
-    : firstHolding
-      ? String(firstHolding.schemeCode)
-      : "";
-  const selectedHolding =
-    data.holdings.find(
-      (holding) => String(holding.schemeCode) === effectiveSelectedHistorySchemeCode
-    ) || firstHolding;
   const totalTransactionPages = Math.max(
     1,
     Math.ceil(data.recentTransactions.length / TRANSACTIONS_PAGE_SIZE)
@@ -211,59 +199,6 @@ export function MutualFundsView({
       date: new Date().toISOString().slice(0, 10),
     },
   });
-
-  useEffect(() => {
-    if (!effectiveSelectedHistorySchemeCode || !selectedHolding) {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    async function loadFundHistory() {
-      setIsHistoryLoading(true);
-      setHistoryError(null);
-
-      try {
-        const response = await fetch(
-          `/api/mutual-funds/history?schemeCode=${encodeURIComponent(
-            effectiveSelectedHistorySchemeCode
-          )}&schemeName=${encodeURIComponent(selectedHolding.schemeName)}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
-        const result = (await response.json().catch(() => null)) as
-          | { history?: MutualFundNavHistory; message?: string }
-          | null;
-
-        if (!response.ok || !result?.history) {
-          throw new Error(result?.message || "Unable to load fund movement history.");
-        }
-
-        setSelectedFundHistory(result.history);
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setSelectedFundHistory(null);
-        setHistoryError(
-          error instanceof Error ? error.message : "Unable to load fund movement history."
-        );
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsHistoryLoading(false);
-        }
-      }
-    }
-
-    void loadFundHistory();
-
-    return () => {
-      controller.abort();
-    };
-  }, [effectiveSelectedHistorySchemeCode, selectedHolding]);
 
   useEffect(() => {
     const selectedSchemeCode =
@@ -623,17 +558,12 @@ export function MutualFundsView({
 
             <div className="mt-6 h-[21rem]">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="mfPortfolioFill" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.24} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0.04} />
-                    </linearGradient>
-                    <linearGradient id="mfInvestedFill" x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="5%" stopColor="#16a34a" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#16a34a" stopOpacity={0.01} />
-                    </linearGradient>
-                  </defs>
+                <BarChart
+                  barCategoryGap="22%"
+                  barGap={0}
+                  data={chartData}
+                  margin={{ top: 12, right: 12, left: 0, bottom: 0 }}
+                >
                   <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 4" vertical={false} />
                   <XAxis
                     axisLine={false}
@@ -662,23 +592,17 @@ export function MutualFundsView({
                     ]}
                     labelStyle={{ color: "var(--wc-tooltip-text)", fontWeight: 600 }}
                   />
-                  <Area
+                  <Bar
                     dataKey="totalInvested"
-                    fill="url(#mfInvestedFill)"
-                    fillOpacity={1}
-                    stroke="#16a34a"
-                    strokeWidth={2}
-                    type="monotone"
+                    fill="#16a34a"
+                    radius={[8, 8, 0, 0]}
                   />
-                  <Area
+                  <Bar
                     dataKey="totalValue"
-                    fill="url(#mfPortfolioFill)"
-                    fillOpacity={1}
-                    stroke="#2563eb"
-                    strokeWidth={3}
-                    type="monotone"
+                    fill="#2563eb"
+                    radius={[8, 8, 0, 0]}
                   />
-                </AreaChart>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </section>
@@ -833,122 +757,57 @@ export function MutualFundsView({
             </div>
 
             <div className="rounded-[1.75rem] border border-[#eef2f7] bg-[#fafaf8] p-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
                 <div>
-                  <h4 className="text-base font-semibold text-neutral-950">Fund Movement</h4>
+                  <h4 className="text-base font-semibold text-neutral-950">
+                    Best Performing Funds
+                  </h4>
                   <p className="mt-1 text-sm text-neutral-500">
-                    Last 12 months NAV trend for one bought mutual fund.
+                    Top 5 holdings ranked by return percentage.
                   </p>
-                </div>
-                <div className="w-full sm:max-w-xs">
-                  <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">
-                    Selected Fund
-                  </label>
-                  <select
-                    className="h-[2.85rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                    disabled={!data.holdings.length}
-                    onChange={(event) => setSelectedHistorySchemeCode(event.target.value)}
-                    value={effectiveSelectedHistorySchemeCode}
-                  >
-                    {data.holdings.map((holding) => (
-                      <option key={holding.schemeCode} value={holding.schemeCode}>
-                        {holding.schemeName}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
 
-              {selectedHolding ? (
-                <>
-                  <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                    <MetricChip
-                      label="Current NAV"
-                      value={formatter.format(selectedHolding.currentNav)}
-                    />
-                    <MetricChip
-                      label="Current Value"
-                      value={formatter.format(selectedHolding.currentValue)}
-                    />
-                    <MetricChip
-                      label={selectedFundHistory && selectedFundHistory.changeAmount < 0 ? "12M Loss" : "12M Gain"}
-                      tone={
-                        selectedFundHistory
-                          ? selectedFundHistory.changeAmount < 0
-                            ? "negative"
-                            : "positive"
-                          : "neutral"
-                      }
-                      value={
-                        selectedFundHistory
-                          ? `${formatSignedCurrency(selectedFundHistory.changeAmount, formatter)} • ${formatSignedPercent(selectedFundHistory.changePct)}`
-                          : "--"
-                      }
-                    />
-                  </div>
+              {bestPerformingFunds.length ? (
+                <div className="mt-4 grid gap-2.5">
+                  {bestPerformingFunds.map((fund, index) => {
+                    const profitUp = fund.profitLossAmount >= 0;
 
-                  <div className="mt-5 h-[18rem]">
-                    {isHistoryLoading ? (
-                      <div className="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white text-sm text-neutral-500">
-                        Loading 12-month movement...
+                    return (
+                      <div
+                        key={fund.schemeCode}
+                        className="flex items-center gap-3 rounded-[1.2rem] border border-[#e6ebf2] bg-white px-3 py-3 shadow-sm"
+                      >
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#f3f6fb] text-xs font-semibold text-neutral-950">
+                          #{index + 1}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13px] font-semibold text-neutral-950">
+                            {fund.schemeName}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-neutral-500">
+                            Current value {formatter.format(fund.currentValue)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p
+                            className={`text-[13px] font-semibold ${
+                              profitUp ? "text-emerald-600" : "text-rose-600"
+                            }`}
+                          >
+                            {formatSignedPercent(fund.profitLossPct)}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-neutral-500">
+                            {formatSignedCurrency(fund.profitLossAmount, formatter)}
+                          </p>
+                        </div>
                       </div>
-                    ) : historyError ? (
-                      <div className="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-[#f1d2d2] bg-white px-6 text-center text-sm text-rose-600">
-                        {historyError}
-                      </div>
-                    ) : selectedFundHistory?.points.length ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart
-                          data={selectedFundHistory.points}
-                          margin={{ top: 12, right: 12, left: 0, bottom: 0 }}
-                        >
-                          <CartesianGrid
-                            stroke="var(--wc-chart-grid)"
-                            strokeDasharray="4 4"
-                            vertical={false}
-                          />
-                          <XAxis
-                            axisLine={false}
-                            dataKey="label"
-                            tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
-                            tickLine={false}
-                          />
-                          <YAxis
-                            axisLine={false}
-                            tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
-                            tickFormatter={(value) => compactCurrency(Number(value) || 0, formatter)}
-                            tickLine={false}
-                            width={72}
-                          />
-                          <Tooltip
-                            content={(props) => (
-                              <FundMovementTooltip
-                                {...(props as TooltipContentProps)}
-                                currencyFormatter={formatter}
-                              />
-                            )}
-                            cursor={{ stroke: "#2563eb", strokeDasharray: "4 4" }}
-                            wrapperStyle={{ zIndex: 20 }}
-                          />
-                          <Line
-                            dataKey="nav"
-                            dot={{ fill: "#2563eb", r: 3, strokeWidth: 0 }}
-                            stroke="#2563eb"
-                            strokeWidth={3}
-                            type="monotone"
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white px-6 text-center text-sm text-neutral-500">
-                        No 12-month movement data available for this fund yet.
-                      </div>
-                    )}
-                  </div>
-                </>
+                    );
+                  })}
+                </div>
               ) : (
                 <div className="mt-5 flex h-[22rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white text-sm text-neutral-500">
-                  Buy a fund first to view its 12-month movement chart.
+                  Buy a fund first to see the top performers.
                 </div>
               )}
             </div>
@@ -1664,29 +1523,4 @@ function compactCurrency(value: number, formatter: Intl.NumberFormat) {
   const currency = parts.find((part) => part.type === "currency")?.value || "";
 
   return `${currency}${Math.round(value)}`;
-}
-
-function FundMovementTooltip({
-  active,
-  payload,
-  label,
-  currencyFormatter,
-}: TooltipContentProps & {
-  currencyFormatter: Intl.NumberFormat;
-}) {
-  if (!active || !payload?.length) {
-    return null;
-  }
-
-  const nav = Number(payload[0]?.value) || 0;
-
-  return (
-    <div className="rounded-2xl border border-[#e6ebf2] bg-white px-3.5 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.12)]">
-      <p className="text-sm font-semibold text-neutral-950">{label || "NAV"}</p>
-      <div className="mt-2 flex items-center justify-between gap-4 text-sm">
-        <span className="text-neutral-500">NAV</span>
-        <span className="font-semibold text-neutral-950">{currencyFormatter.format(nav)}</span>
-      </div>
-    </div>
-  );
 }

@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Area,
-  AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   Pie,
@@ -499,13 +499,12 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
               </div>
               <div className="h-[22rem]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={trendData} margin={{ left: 8, right: 10, top: 10 }}>
-                    <defs>
-                      <linearGradient id="goldValueFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="5%" stopColor="#d97706" stopOpacity={0.28} />
-                        <stop offset="95%" stopColor="#d97706" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
+                  <BarChart
+                    barCategoryGap="22%"
+                    barGap={0}
+                    data={trendData}
+                    margin={{ left: 8, right: 10, top: 10 }}
+                  >
                     <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 6" vertical={false} />
                     <XAxis
                       axisLine={false}
@@ -527,24 +526,19 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                         />
                       )}
                     />
-                    <Area
-                      dataKey="totalValue"
-                      fill="url(#goldValueFill)"
-                      name="Current Value"
-                      stroke="#d97706"
-                      strokeWidth={3}
-                      type="monotone"
-                    />
-                    <Area
+                    <Bar
                       dataKey="totalInvested"
-                      fill="transparent"
+                      fill="#64748b"
                       name="Invested"
-                      stroke="#64748b"
-                      strokeDasharray="4 4"
-                      strokeWidth={2}
-                      type="monotone"
+                      radius={[8, 8, 0, 0]}
                     />
-                  </AreaChart>
+                    <Bar
+                      dataKey="totalValue"
+                      fill="#d97706"
+                      name="Current Value"
+                      radius={[8, 8, 0, 0]}
+                    />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
