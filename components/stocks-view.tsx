@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   Area,
   AreaChart,
@@ -37,7 +37,12 @@ import {
   type MarketSyncBatchSummary,
 } from "@/components/market-sync-batch-review";
 import { StocksHoldingsTable } from "@/components/stocks-holdings-table";
-import type { StockDashboardData, StockHoldingSummary, StockSearchResult } from "@/lib/stocks.types";
+import type {
+  StockDashboardData,
+  StockHoldingSummary,
+  StockQuote,
+  StockSearchResult,
+} from "@/lib/stocks.types";
 
 type StocksViewProps = {
   currencyCode: string;
@@ -122,6 +127,9 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
   );
   const [searchOptions, setSearchOptions] = useState<StockSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [latestBuyQuote, setLatestBuyQuote] = useState<StockQuote | null>(null);
+  const [latestBuyQuoteError, setLatestBuyQuoteError] = useState<string | null>(null);
+  const [isLatestBuyQuoteLoading, setIsLatestBuyQuoteLoading] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
   const [transactionsPage, setTransactionsPage] = useState(1);
   const [isPending, startTransition] = useTransition();
@@ -133,6 +141,7 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
       note: "",
     },
   });
+  const { setValue: setBuyValue } = buyForm;
   const sellForm = useForm<SellFormValues>({
     defaultValues: {
       quantity: "",
@@ -165,6 +174,63 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
     (currentTransactionsPage - 1) * STOCK_TRANSACTIONS_PAGE_SIZE,
     currentTransactionsPage * STOCK_TRANSACTIONS_PAGE_SIZE
   );
+  const selectedBuyStock = selectedSearch[0] || null;
+
+  useEffect(() => {
+    if (activeModal !== "buy" || !selectedBuyStock?.symbol) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadLatestQuote() {
+      setLatestBuyQuote(null);
+      setLatestBuyQuoteError(null);
+      setIsLatestBuyQuoteLoading(true);
+
+      try {
+        const response = await fetch(
+          `/api/stocks/quotes?symbol=${encodeURIComponent(selectedBuyStock.symbol)}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+        const result = (await response.json().catch(() => null)) as
+          | { quote?: StockQuote; message?: string }
+          | null;
+
+        if (!response.ok || typeof result?.quote?.regularMarketPrice !== "number") {
+          throw new Error(result?.message || "Unable to load latest stock price.");
+        }
+
+        setLatestBuyQuote(result.quote);
+        setBuyValue("price", String(result.quote.regularMarketPrice), {
+          shouldDirty: true,
+          shouldValidate: true,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setLatestBuyQuote(null);
+        setLatestBuyQuoteError(
+          error instanceof Error ? error.message : "Unable to load latest stock price."
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLatestBuyQuoteLoading(false);
+        }
+      }
+    }
+
+    void loadLatestQuote();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeModal, selectedBuyStock?.symbol, setBuyValue]);
 
   async function onSearch(query: string) {
     if (!query.trim()) {
@@ -198,6 +264,9 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
   function closeModal() {
     setActiveModal(null);
     setSelectedSearch([]);
+    setLatestBuyQuote(null);
+    setLatestBuyQuoteError(null);
+    setIsLatestBuyQuoteLoading(false);
     buyForm.reset({
       quantity: "",
       price: "",
@@ -694,7 +763,12 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                     : `${option.shortName} • ${option.companyName}`
                 }
                 minLength={1}
-                onChange={(selected) => setSelectedSearch(selected as StockSearchResult[])}
+                onChange={(selected) => {
+                  setLatestBuyQuote(null);
+                  setLatestBuyQuoteError(null);
+                  setIsLatestBuyQuoteLoading(Boolean(selected.length));
+                  setSelectedSearch(selected as StockSearchResult[]);
+                }}
                 onSearch={onSearch}
                 options={searchOptions}
                 placeholder="Search by company, symbol, or Yahoo symbol"
@@ -712,6 +786,14 @@ export function StocksView({ currencyCode, initialData }: StocksViewProps) {
                 selected={selectedSearch}
                 useCache={false}
               />
+              {selectedBuyStock ? (
+                <LatestStockPriceHint
+                  formatter={formatter}
+                  isLoading={isLatestBuyQuoteLoading}
+                  message={latestBuyQuoteError}
+                  quote={latestBuyQuote}
+                />
+              ) : null}
             </div>
             <Field label="Quantity">
               <input {...buyForm.register("quantity", { required: true })} className={inputClassName} inputMode="numeric" />
@@ -1009,6 +1091,49 @@ function EmptyState({ title, description }: { title: string; description: string
     <div className="rounded-3xl border border-dashed border-[#d7e1ef] bg-[#f8fbff] px-5 py-10 text-center">
       <p className="text-sm font-semibold text-[#223655]">{title}</p>
       <p className="mt-2 text-sm text-[#72829a]">{description}</p>
+    </div>
+  );
+}
+
+function LatestStockPriceHint({
+  formatter,
+  isLoading,
+  message,
+  quote,
+}: {
+  formatter: Intl.NumberFormat;
+  isLoading: boolean;
+  message: string | null;
+  quote: StockQuote | null;
+}) {
+  if (isLoading) {
+    return <p className="mt-2 text-xs text-[#6d7d97]">Loading latest stock price...</p>;
+  }
+
+  if (message) {
+    return <p className="mt-2 text-xs text-[#b23434]">{message}</p>;
+  }
+
+  if (!quote?.regularMarketPrice) {
+    return null;
+  }
+
+  const change = quote.regularMarketChange;
+  const changePercent = quote.regularMarketChangePercent;
+  const isPositive = (change || 0) >= 0;
+
+  return (
+    <div className="mt-2 rounded-2xl border border-[#dbe4f0] bg-[#f8fbff] px-3 py-2 text-xs text-[#51627d]">
+      <span className="font-semibold text-[#17304f]">
+        Latest price: {formatter.format(quote.regularMarketPrice)}
+      </span>
+      {change != null ? (
+        <span className={isPositive ? "ml-2 text-[#0f7a56]" : "ml-2 text-[#b23434]"}>
+          {isPositive ? "+" : ""}
+          {formatter.format(change)}
+          {changePercent == null ? "" : ` (${formatPercent(changePercent)})`}
+        </span>
+      ) : null}
     </div>
   );
 }

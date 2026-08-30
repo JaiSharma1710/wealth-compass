@@ -13,6 +13,7 @@ import type {
 } from "@/lib/gold.types";
 import { connectToDatabase } from "@/lib/mongodb";
 import { GoldTransaction } from "@/lib/models/gold-transaction";
+import { getSovereignGoldBondQuoteMap } from "@/lib/services/nse-sgb.service";
 
 const RECENT_ACTIVITY_PAGE_SIZE = 10;
 const EPSILON = 0.000001;
@@ -21,6 +22,7 @@ type GoldTransactionRecord = {
   _id: { toString(): string } | string;
   investmentOption: GoldInvestmentOption;
   schemeName: string;
+  units?: number | null;
   transactionType: GoldTransactionType;
   investedAmount?: number | null;
   currentValue?: number | null;
@@ -36,6 +38,7 @@ type HoldingAccumulator = {
   investmentOption: GoldInvestmentOption;
   investmentOptionLabel: string;
   schemeName: string;
+  units: number;
   investedAmount: number;
   currentValue: number;
 };
@@ -138,6 +141,7 @@ function normalizeHoldings(holdings: Map<string, HoldingAccumulator>): GoldHoldi
 
       return {
         ...holding,
+        units: roundCurrency(Math.max(holding.units, 0)),
         investedAmount,
         currentValue,
         profitLossAmount,
@@ -167,11 +171,13 @@ function buildLedgerFromTransactions(
       investmentOption: transaction.investmentOption,
       investmentOptionLabel: getGoldOptionLabel(transaction.investmentOption),
       schemeName,
+      units: 0,
       investedAmount: 0,
       currentValue: 0,
     };
 
     if (transaction.transactionType === "buy") {
+      current.units += transaction.units || 0;
       current.investedAmount += transaction.investedAmount || 0;
       current.currentValue += transaction.currentValue || 0;
       holdings.set(holdingId, current);
@@ -214,12 +220,15 @@ function buildLedgerFromTransactions(
           ? current.investedAmount * (sellAmount / current.currentValue)
           : 0;
       const realizedProfitAmount = sellAmount - realizedCostBasisAmount;
+      const soldUnits =
+        current.currentValue > 0 ? current.units * (sellAmount / current.currentValue) : 0;
 
       realizedByTransactionId.set(String(transaction._id), {
         realizedCostBasisAmount: roundCurrency(realizedCostBasisAmount),
         realizedProfitAmount: roundCurrency(realizedProfitAmount),
       });
 
+      current.units -= soldUnits;
       current.currentValue -= sellAmount;
       current.investedAmount -= realizedCostBasisAmount;
     }
@@ -229,6 +238,7 @@ function buildLedgerFromTransactions(
     } else {
       current.currentValue = Math.max(current.currentValue, 0);
       current.investedAmount = Math.max(current.investedAmount, 0);
+      current.units = Math.max(current.units, 0);
       holdings.set(holdingId, current);
     }
   }
@@ -312,6 +322,7 @@ export async function getGoldRecentActivity(
         investmentOption: entry.investmentOption,
         investmentOptionLabel: getGoldOptionLabel(entry.investmentOption),
         schemeName: entry.schemeName,
+        units: entry.units ? roundCurrency(entry.units) : null,
         investedAmount:
           entry.transactionType === "buy" ? roundCurrency(entry.investedAmount || 0) : null,
         currentValue:
@@ -409,6 +420,7 @@ export async function saveGoldTransaction(
     investmentOption: string;
     schemeName: string;
     date: string;
+    units?: number;
     investedAmount?: number;
     currentValue?: number;
     sellAmount?: number;
@@ -470,6 +482,7 @@ export async function saveGoldTransaction(
   if (input.transactionType === "buy") {
     const investedAmount = roundCurrency(Number(input.investedAmount));
     const currentValue = roundCurrency(Number(input.currentValue));
+    const units = Number(input.units || 0);
 
     if (!Number.isFinite(investedAmount) || investedAmount <= 0) {
       throw new Error("Invested amount must be greater than zero.");
@@ -479,9 +492,14 @@ export async function saveGoldTransaction(
       throw new Error("Current value must be greater than zero.");
     }
 
+    if (input.investmentOption === "sovereign_gold_bond" && (!Number.isFinite(units) || units <= 0)) {
+      throw new Error("SGB units must be greater than zero.");
+    }
+
     record = {
       ...baseRecord,
       _id: "pending",
+      units: input.investmentOption === "sovereign_gold_bond" ? units : null,
       investedAmount,
       currentValue,
       sellAmount: null,
@@ -509,6 +527,7 @@ export async function saveGoldTransaction(
     record = {
       ...baseRecord,
       _id: "pending",
+      units: null,
       investedAmount: null,
       currentValue: null,
       sellAmount,
@@ -529,6 +548,7 @@ export async function saveGoldTransaction(
     record = {
       ...baseRecord,
       _id: "pending",
+      units: null,
       investedAmount: null,
       currentValue,
       sellAmount: null,
@@ -543,6 +563,7 @@ export async function saveGoldTransaction(
     investmentOption: record.investmentOption,
     schemeName: record.schemeName,
     transactionType: record.transactionType,
+    units: record.units ?? null,
     investedAmount: record.investedAmount ?? null,
     currentValue: record.currentValue ?? null,
     sellAmount: record.sellAmount ?? null,
@@ -550,6 +571,79 @@ export async function saveGoldTransaction(
     realizedProfitAmount: record.realizedProfitAmount ?? null,
     transactionDate,
   });
+}
+
+export async function syncSovereignGoldBondValuesForUser(userId: string, options?: { now?: Date }) {
+  const transactions = await loadTransactions(userId);
+  const ledger = buildLedgerFromTransactions(transactions);
+  const sgbHoldings = ledger.holdings.filter(
+    (holding) => holding.investmentOption === "sovereign_gold_bond" && (holding.units || 0) > EPSILON
+  );
+
+  if (!sgbHoldings.length) {
+    return {
+      updatedCount: 0,
+      skippedCount: 0,
+      missingSymbols: [] as string[],
+    };
+  }
+
+  const quoteMap = await getSovereignGoldBondQuoteMap();
+  const now = options?.now || new Date();
+  const transactionDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let updatedCount = 0;
+  let skippedCount = 0;
+  const missingSymbols: string[] = [];
+
+  await connectToDatabase();
+
+  for (const holding of sgbHoldings) {
+    const quote = quoteMap.get(holding.schemeName.toUpperCase());
+    const units = holding.units || 0;
+
+    if (!quote) {
+      skippedCount += 1;
+      missingSymbols.push(holding.schemeName);
+      continue;
+    }
+
+    await GoldTransaction.findOneAndUpdate(
+      {
+        userId,
+        investmentOption: "sovereign_gold_bond",
+        schemeName: holding.schemeName,
+        transactionType: "valuation",
+        transactionDate,
+      },
+      {
+        $set: {
+          userId,
+          investmentOption: "sovereign_gold_bond",
+          schemeName: holding.schemeName,
+          units: null,
+          transactionType: "valuation",
+          investedAmount: null,
+          currentValue: roundCurrency(units * quote.lastPrice),
+          sellAmount: null,
+          realizedCostBasisAmount: null,
+          realizedProfitAmount: null,
+          transactionDate,
+        },
+      },
+      {
+        new: true,
+        setDefaultsOnInsert: true,
+        upsert: true,
+      }
+    );
+    updatedCount += 1;
+  }
+
+  return {
+    updatedCount,
+    skippedCount,
+    missingSymbols,
+  };
 }
 
 export async function deleteGoldTransaction(userId: string, transactionId: string) {

@@ -91,6 +91,19 @@ export type MarketSyncBatchSummary = {
   errorMessage: string;
 };
 
+export type MarketSyncCronFailure = {
+  userId: string;
+  message: string;
+};
+
+export type MarketSyncCronRunSummary = {
+  userCount: number;
+  batchCount: number;
+  failureCount: number;
+  batches: MarketSyncBatchSummary[];
+  failures: MarketSyncCronFailure[];
+};
+
 function toObjectId(value: string) {
   return new Types.ObjectId(value);
 }
@@ -148,8 +161,12 @@ function normalizeBatch(batch: MarketSyncBatchLean): MarketSyncBatchSummary {
   };
 }
 
-function getBatchStatus(items: MarketSyncItemLean[]) {
+function getBatchStatus(items: Array<{ status: MarketSyncItemLean["status"] }>) {
   if (!items.length) {
+    return "error" as const;
+  }
+
+  if (items.every((item) => item.status === "error")) {
     return "error" as const;
   }
 
@@ -269,7 +286,7 @@ export async function createMarketSyncBatch(input: {
     date,
     source: input.source,
     assetType: input.assetType,
-    status: items.length ? "pending" : "error",
+    status: getBatchStatus(items),
     fetchedAt,
     items,
     errorMessage: items.length ? "" : "No active stock or mutual fund holdings to refresh.",
@@ -283,20 +300,36 @@ export async function createCronMarketSyncBatches() {
 
   const users = await User.find({ status: "active" }).select({ _id: 1 }).lean();
   const batches: MarketSyncBatchSummary[] = [];
+  const failures: MarketSyncCronFailure[] = [];
 
   for (const user of users) {
-    const batch = await createMarketSyncBatch({
-      userId: String(user._id),
-      assetType: "mixed",
-      source: "cron",
-    });
+    const userId = String(user._id);
 
-    if (batch.items.length) {
-      batches.push(batch);
+    try {
+      const batch = await createMarketSyncBatch({
+        userId,
+        assetType: "mixed",
+        source: "cron",
+      });
+
+      if (batch.items.length) {
+        batches.push(batch);
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to create market sync batch.";
+      failures.push({ userId, message });
+      console.error("Market data cron failed for user.", { userId, error });
     }
   }
 
-  return batches;
+  return {
+    userCount: users.length,
+    batchCount: batches.length,
+    failureCount: failures.length,
+    batches,
+    failures,
+  } satisfies MarketSyncCronRunSummary;
 }
 
 export async function listMarketSyncBatches(input: {

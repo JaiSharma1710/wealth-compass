@@ -25,10 +25,9 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import toast from "react-hot-toast";
 
-import { GOLD_INVESTMENT_OPTIONS } from "@/lib/gold.types";
 import type {
   GoldActivitySummary,
   GoldDashboardData,
@@ -43,8 +42,8 @@ type GoldViewProps = {
 
 type BuyGoldValues = {
   date: string;
-  investmentOption: string;
   schemeName: string;
+  units: string;
   investedAmount: string;
   currentValue: string;
 };
@@ -61,6 +60,17 @@ type ValuationGoldValues = {
   currentValue: string;
 };
 
+type SovereignGoldBondQuote = {
+  symbol: string;
+  lastPrice: number;
+  change: number | null;
+  changePercent: number | null;
+  previousClose: number | null;
+  issuePrice: number | null;
+  maturityDate: string;
+  fetchedAt: string;
+};
+
 const GOLD_CHART_COLORS = [
   "#d97706",
   "#2563eb",
@@ -68,6 +78,7 @@ const GOLD_CHART_COLORS = [
   "#f97316",
   "#8b5cf6",
 ];
+const SGB_INVESTMENT_OPTION = "sovereign_gold_bond";
 const RADIAN = Math.PI / 180;
 
 function formatSignedCurrency(value: number, formatter: Intl.NumberFormat) {
@@ -115,9 +126,12 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
     null
   );
   const [activityState, setActivityState] = useState<GoldRecentActivityPage | null>(null);
+  const [sgbBonds, setSgbBonds] = useState<SovereignGoldBondQuote[]>([]);
+  const [isSgbLoading, setIsSgbLoading] = useState(false);
   const [isActivityLoading, setIsActivityLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
+  const inrFormatter = useMemo(() => createCurrencyFormatter("INR"), []);
   const distributionData = useMemo(
     () =>
       initialData.optionDistribution.map((entry, index) => ({
@@ -131,21 +145,32 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
   const hasActivityInteraction = activityState !== null;
   const profitUp = initialData.totalProfitLossAmount >= 0;
   const monthTrendUp = initialData.monthOverMonthChangeAmount >= 0;
+  const sgbHoldings = useMemo(
+    () => initialData.holdings.filter((holding) => holding.investmentOption === SGB_INVESTMENT_OPTION),
+    [initialData.holdings]
+  );
   const defaultHoldingId = initialData.holdings[0]?.id || "";
+  const defaultSgbHoldingId = sgbHoldings[0]?.id || "";
   const {
     register: registerBuy,
     handleSubmit: handleBuySubmit,
     reset: resetBuy,
+    setValue: setBuyValue,
+    control: buyControl,
     formState: { errors: buyErrors, isSubmitting: isBuySubmitting },
   } = useForm<BuyGoldValues>({
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
-      investmentOption: GOLD_INVESTMENT_OPTIONS[0].value,
       schemeName: "",
+      units: "",
       investedAmount: "",
       currentValue: "",
     },
   });
+  const selectedSgbSymbol = useWatch({ control: buyControl, name: "schemeName" });
+  const selectedSgbUnits = useWatch({ control: buyControl, name: "units" });
+  const selectedSgbQuote =
+    sgbBonds.find((bond) => bond.symbol === selectedSgbSymbol) || sgbBonds[0] || null;
   const {
     register: registerSell,
     handleSubmit: handleSellSubmit,
@@ -154,7 +179,7 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
   } = useForm<SellGoldValues>({
     defaultValues: {
       date: new Date().toISOString().slice(0, 10),
-      holdingId: defaultHoldingId,
+      holdingId: defaultSgbHoldingId,
       sellAmount: "",
     },
   });
@@ -218,18 +243,88 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
     };
   }, [activity.page, hasActivityInteraction]);
 
+  useEffect(() => {
+    if (activeModal !== "buy" || sgbBonds.length) {
+      return;
+    }
+
+    let shouldIgnoreResult = false;
+
+    async function loadSgbBonds() {
+      setIsSgbLoading(true);
+
+      try {
+        const response = await fetch("/api/gold/sgb", {
+          cache: "no-store",
+        });
+        const result = (await response.json().catch(() => null)) as
+          | { bonds?: SovereignGoldBondQuote[]; message?: string }
+          | null;
+
+        if (!response.ok || !result?.bonds) {
+          throw new Error(result?.message || "Unable to load SGB symbols.");
+        }
+
+        if (shouldIgnoreResult) {
+          return;
+        }
+
+        setSgbBonds(result.bonds);
+        setBuyValue("schemeName", result.bonds[0]?.symbol || "", {
+          shouldValidate: true,
+        });
+      } catch (error) {
+        if (!shouldIgnoreResult) {
+          toast.error(error instanceof Error ? error.message : "Unable to load SGB symbols.");
+        }
+      } finally {
+        if (!shouldIgnoreResult) {
+          setIsSgbLoading(false);
+        }
+      }
+    }
+
+    void loadSgbBonds();
+
+    return () => {
+      shouldIgnoreResult = true;
+    };
+  }, [activeModal, setBuyValue, sgbBonds.length]);
+
+  useEffect(() => {
+    if (activeModal === "buy" && sgbBonds.length && !selectedSgbSymbol) {
+      setBuyValue("schemeName", sgbBonds[0].symbol, { shouldValidate: true });
+    }
+  }, [activeModal, selectedSgbSymbol, setBuyValue, sgbBonds]);
+
+  useEffect(() => {
+    if (activeModal !== "buy") {
+      return;
+    }
+
+    const units = Number(selectedSgbUnits || 0);
+    const currentValue =
+      selectedSgbQuote && Number.isFinite(units) && units > 0
+        ? selectedSgbQuote.lastPrice * units
+        : 0;
+
+    setBuyValue("currentValue", currentValue > 0 ? String(roundCurrency(currentValue)) : "", {
+      shouldValidate: true,
+    });
+  }, [activeModal, selectedSgbQuote, selectedSgbUnits, setBuyValue]);
+
   function closeModal() {
     setActiveModal(null);
     resetBuy({
       date: new Date().toISOString().slice(0, 10),
-      investmentOption: GOLD_INVESTMENT_OPTIONS[0].value,
       schemeName: "",
+      units: "",
       investedAmount: "",
       currentValue: "",
     });
     resetSell({
       date: new Date().toISOString().slice(0, 10),
-      holdingId: defaultHoldingId,
+      holdingId: defaultSgbHoldingId,
       sellAmount: "",
     });
     resetValuation({
@@ -267,8 +362,9 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
     try {
       await saveGoldTransaction({
         transactionType: "buy",
-        investmentOption: values.investmentOption,
+        investmentOption: SGB_INVESTMENT_OPTION,
         schemeName: values.schemeName,
+        units: Number(values.units),
         investedAmount: Number(values.investedAmount),
         currentValue: Number(values.currentValue),
         date: values.date,
@@ -279,7 +375,7 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
   }
 
   async function onSell(values: SellGoldValues) {
-    const holding = initialData.holdings.find((entry) => entry.id === values.holdingId);
+    const holding = sgbHoldings.find((entry) => entry.id === values.holdingId);
     const sellAmount = Number(values.sellAmount);
 
     if (!holding) {
@@ -372,16 +468,16 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                   type="button"
                 >
                   <Plus className="size-4" />
-                  <span>Buy Gold</span>
+                  <span>Buy SGB</span>
                 </button>
                 <button
                   className="inline-flex items-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!initialData.holdings.length}
+                  disabled={!sgbHoldings.length}
                   onClick={() => setActiveModal("sell")}
                   type="button"
                 >
                   <Minus className="size-4" />
-                  <span>Sell Gold</span>
+                  <span>Sell SGB</span>
                 </button>
                 <button
                   className="inline-flex items-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -564,6 +660,7 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                   <tr>
                     <th className="px-4 py-3">Holding</th>
                     <th className="px-4 py-3">Option</th>
+                    <th className="px-4 py-3">Units</th>
                     <th className="px-4 py-3">Invested</th>
                     <th className="px-4 py-3">Current Value</th>
                     <th className="px-4 py-3">Profit/Loss</th>
@@ -576,6 +673,9 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                         <span className="block truncate">{holding.schemeName}</span>
                       </td>
                       <td className="px-4 py-3">{holding.investmentOptionLabel}</td>
+                      <td className="px-4 py-3">
+                        {holding.units == null || holding.units <= 0 ? "-" : holding.units}
+                      </td>
                       <td className="px-4 py-3">{formatter.format(holding.investedAmount)}</td>
                       <td className="px-4 py-3 font-medium text-neutral-950">
                         {formatter.format(holding.currentValue)}
@@ -644,6 +744,7 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
                       </p>
                       <p className="mt-1 text-sm text-neutral-500">
                         {entry.investmentOptionLabel} ·{" "}
+                        {entry.units ? `${entry.units} units · ` : ""}
                         {new Intl.DateTimeFormat("en-IN", {
                           day: "2-digit",
                           month: "short",
@@ -705,48 +806,56 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
       </div>
 
       {activeModal === "buy" ? (
-        <ModalFrame title="Buy Gold" onClose={closeModal}>
+        <ModalFrame title="Buy SGB" onClose={closeModal}>
           <form className="mt-6 space-y-5" onSubmit={handleBuySubmit(onBuy)}>
             <label className="block space-y-2">
-              <span className="text-sm font-medium text-neutral-800">Investment Option</span>
+              <span className="text-sm font-medium text-neutral-800">SGB Symbol</span>
               <select
                 className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                {...registerBuy("investmentOption", {
-                  required: "Investment option is required.",
+                disabled={isSgbLoading}
+                {...registerBuy("schemeName", {
+                  required: "Please choose an SGB symbol.",
                 })}
               >
-                {GOLD_INVESTMENT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
+                {sgbBonds.length ? (
+                  sgbBonds.map((bond) => (
+                    <option key={bond.symbol} value={bond.symbol}>
+                      {bond.symbol} · {inrFormatter.format(bond.lastPrice)}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">
+                    {isSgbLoading ? "Loading SGB symbols..." : "No SGB symbols available"}
                   </option>
-                ))}
+                )}
               </select>
-              {buyErrors.investmentOption ? (
-                <span className="text-sm text-destructive">
-                  {buyErrors.investmentOption.message}
-                </span>
-              ) : null}
-            </label>
-
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-neutral-800">
-                Fund, Scheme, or Asset Name
-              </span>
-              <input
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                placeholder="SGB 2026-27 Series II"
-                {...registerBuy("schemeName", {
-                  required: "Fund or scheme name is required.",
-                  maxLength: {
-                    value: 220,
-                    message: "Name must be 220 characters or fewer.",
-                  },
-                })}
-              />
               {buyErrors.schemeName ? (
                 <span className="text-sm text-destructive">{buyErrors.schemeName.message}</span>
-              ) : null}
+              ) : (
+                <span className="text-xs text-neutral-500">Sovereign Gold Bond</span>
+              )}
             </label>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AmountInput
+                error={buyErrors.units?.message}
+                label="Units"
+                placeholder="10"
+                register={registerBuy("units", {
+                  required: "SGB units are required.",
+                  validate: (value) =>
+                    Number(value) > 0 || "SGB units must be greater than zero.",
+                })}
+              />
+              <div className="rounded-[1rem] border border-[#e6ebf2] bg-[#fafaf8] px-4 py-3 text-sm text-neutral-600">
+                <p className="font-semibold text-neutral-950">
+                  {selectedSgbQuote
+                    ? inrFormatter.format(selectedSgbQuote.lastPrice)
+                    : "Price unavailable"}
+                </p>
+                <p className="mt-1">NSE last traded price</p>
+              </div>
+            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <AmountInput
@@ -761,13 +870,14 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
               />
               <AmountInput
                 error={buyErrors.currentValue?.message}
-                label="Current Value"
+                label="Current Value (Auto)"
                 placeholder="52000"
                 register={registerBuy("currentValue", {
                   required: "Current value is required.",
                   validate: (value) =>
                     Number(value) > 0 || "Current value must be greater than zero.",
                 })}
+                readOnly
               />
             </div>
 
@@ -789,13 +899,15 @@ export function GoldView({ currencyCode, initialData }: GoldViewProps) {
       ) : null}
 
       {activeModal === "sell" ? (
-        <ModalFrame title="Sell Gold" onClose={closeModal}>
+        <ModalFrame title="Sell SGB" onClose={closeModal}>
           <form className="mt-6 space-y-5" onSubmit={handleSellSubmit(onSell)}>
             <HoldingSelect
               error={sellErrors.holdingId?.message}
-              holdings={initialData.holdings}
+              holdings={sgbHoldings}
+              includeInvestmentOption={false}
+              label="SGB Holding"
               register={registerSell("holdingId", {
-                required: "Please choose a holding.",
+                required: "Please choose an SGB holding.",
               })}
             />
             <AmountInput
@@ -867,11 +979,13 @@ function AmountInput({
   error,
   label,
   placeholder,
+  readOnly = false,
   register,
 }: {
   error?: string;
   label: string;
   placeholder: string;
+  readOnly?: boolean;
   register: Record<string, unknown>;
 }) {
   return (
@@ -880,6 +994,7 @@ function AmountInput({
       <input
         className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
         placeholder={placeholder}
+        readOnly={readOnly}
         step="0.01"
         type="number"
         {...register}
@@ -915,22 +1030,28 @@ function DateInput({
 function HoldingSelect({
   error,
   holdings,
+  includeInvestmentOption = true,
+  label = "Gold Holding",
   register,
 }: {
   error?: string;
   holdings: GoldHoldingSummary[];
+  includeInvestmentOption?: boolean;
+  label?: string;
   register: Record<string, unknown>;
 }) {
   return (
     <label className="block space-y-2">
-      <span className="text-sm font-medium text-neutral-800">Gold Holding</span>
+      <span className="text-sm font-medium text-neutral-800">{label}</span>
       <select
         className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
         {...register}
       >
         {holdings.map((holding) => (
           <option key={holding.id} value={holding.id}>
-            {holding.schemeName} · {holding.investmentOptionLabel}
+            {includeInvestmentOption
+              ? `${holding.schemeName} · ${holding.investmentOptionLabel}`
+              : holding.schemeName}
           </option>
         ))}
       </select>
@@ -1119,6 +1240,10 @@ function formatActivityAmount(entry: GoldActivitySummary, formatter: Intl.Number
   }
 
   return formatter.format(entry.currentValue || 0);
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function createCurrencyFormatter(currencyCode: string) {

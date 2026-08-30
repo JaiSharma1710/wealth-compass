@@ -20,6 +20,13 @@ const expenseEntrySchema = new Schema(
       required: true,
       min: 0.01,
     },
+    spreadDays: {
+      type: Number,
+      required: true,
+      min: 1,
+      max: 366,
+      default: 1,
+    },
     note: {
       type: String,
       default: "",
@@ -43,7 +50,9 @@ expenseEntrySchema.index({ userId: 1, occurredAt: -1, createdAt: -1 });
 export type ExpenseEntryDocument = InferSchemaType<typeof expenseEntrySchema>;
 
 function hasCurrentExpenseEntrySchema(existingModel: Model<ExpenseEntryDocument>) {
-  return ["entryType", "note", "occurredAt"].every((path) => existingModel.schema.path(path));
+  return ["entryType", "amount", "spreadDays", "note", "occurredAt"].every((path) =>
+    existingModel.schema.path(path)
+  );
 }
 
 const existingExpenseEntryModel =

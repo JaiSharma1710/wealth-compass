@@ -16,6 +16,7 @@ type GoldCreateBody = {
   investmentOption?: string;
   schemeName?: string;
   date?: string;
+  units?: number | string;
   investedAmount?: number | string;
   currentValue?: number | string;
   sellAmount?: number | string;
@@ -94,6 +95,7 @@ export async function POST(request: Request) {
       investmentOption: body?.investmentOption || "",
       schemeName: body?.schemeName || "",
       date: body?.date || "",
+      units: parseOptionalNumber(body?.units),
       investedAmount: parseOptionalNumber(body?.investedAmount),
       currentValue: parseOptionalNumber(body?.currentValue),
       sellAmount: parseOptionalNumber(body?.sellAmount),

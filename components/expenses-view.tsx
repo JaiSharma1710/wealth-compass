@@ -7,6 +7,7 @@ import type { NameType, ValueType } from "recharts/types/component/DefaultToolti
 import {
   ArrowDownRight,
   ArrowUpRight,
+  CalendarRange,
   CircleAlert,
   Landmark,
   LoaderCircle,
@@ -14,7 +15,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import toast from "react-hot-toast";
 
 import type {
@@ -37,6 +38,7 @@ type EntryFormValues = {
   amount: string;
   note: string;
   occurredAt: string;
+  spreadDays: string;
 };
 
 export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
@@ -65,14 +67,21 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
     register: registerEntry,
     handleSubmit: handleEntrySubmit,
     reset: resetEntry,
+    control: entryControl,
     formState: { errors: entryErrors },
   } = useForm<EntryFormValues>({
     defaultValues: {
       amount: "",
       note: "",
       occurredAt: dashboardData.defaultOccurredAt,
+      spreadDays: "1",
     },
   });
+  const entryAmount = Number(useWatch({ control: entryControl, name: "amount" }) || 0);
+  const entrySpreadDays = Math.max(
+    1,
+    Number(useWatch({ control: entryControl, name: "spreadDays" }) || 1)
+  );
 
   useEffect(() => {
     resetBudget({
@@ -161,6 +170,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
           amount: Number(values.amount),
           note: values.note,
           occurredAt: values.occurredAt,
+          spreadDays: activeModal === "expense" ? Number(values.spreadDays || 1) : 1,
         }),
       });
       const result = (await response.json().catch(() => null)) as
@@ -181,6 +191,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
         amount: "",
         note: "",
         occurredAt: result.dashboard.defaultOccurredAt,
+        spreadDays: "1",
       });
       toast.success(result.message || "Entry saved.");
     } catch (error) {
@@ -200,6 +211,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
       amount: "",
       note: "",
       occurredAt: dashboardData.defaultOccurredAt,
+      spreadDays: "1",
     });
     setActiveModal(type);
   }
@@ -515,6 +527,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
                       <th className="pb-3 pr-4 font-medium">Type</th>
                       <th className="pb-3 pr-4 font-medium">Amount</th>
                       <th className="pb-3 pr-4 font-medium">Date & Time</th>
+                      <th className="pb-3 pr-4 font-medium">Allocation</th>
                       <th className="pb-3 font-medium">Note</th>
                     </tr>
                   </thead>
@@ -528,6 +541,9 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
                           {formatter.format(entry.amount)}
                         </td>
                         <td className="py-4 pr-4 text-neutral-600">{formatDateTime(entry.occurredAt)}</td>
+                        <td className="py-4 pr-4 text-neutral-600">
+                          {formatAllocation(entry, formatter)}
+                        </td>
                         <td className="py-4 text-neutral-600">
                           {entry.note ? entry.note : <span className="text-neutral-400">No note</span>}
                         </td>
@@ -633,6 +649,41 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
                 type="datetime-local"
               />
             </Field>
+            {activeModal === "expense" ? (
+              <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                <Field error={entryErrors.spreadDays?.message} label="Days Covered">
+                  <input
+                    {...registerEntry("spreadDays", {
+                      required: "Days covered is required.",
+                      validate: (value) => {
+                        const days = Number(value);
+                        return (
+                          (Number.isInteger(days) && days >= 1 && days <= 366) ||
+                          "Days covered must be between 1 and 366."
+                        );
+                      },
+                    })}
+                    className={inputClassName}
+                    inputMode="numeric"
+                    min={1}
+                    max={366}
+                    step={1}
+                    type="number"
+                  />
+                </Field>
+                <div className="rounded-2xl border border-[#e6ebf2] bg-[#f8fbff] px-4 py-3 text-sm text-[#607089]">
+                  <div className="flex items-center gap-2 font-semibold text-[#17304f]">
+                    <CalendarRange className="size-4" />
+                    <span>
+                      {formatter.format(
+                        entryAmount > 0 ? entryAmount / entrySpreadDays : 0
+                      )}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs">per day</div>
+                </div>
+              </div>
+            ) : null}
             <Field error={entryErrors.note?.message} label="Note">
               <textarea
                 {...registerEntry("note", {
@@ -876,6 +927,7 @@ function EntryCard({
         </div>
       </div>
       <p className="mt-3 text-sm text-neutral-500">{formatDateTime(entry.occurredAt)}</p>
+      <p className="mt-2 text-sm text-neutral-500">{formatAllocation(entry, formatter)}</p>
       <p className="mt-2 text-sm text-neutral-700">{entry.note || "No note"}</p>
     </div>
   );
@@ -996,6 +1048,14 @@ function formatDateTime(value: string) {
     timeStyle: "short",
     timeZone: "Asia/Kolkata",
   }).format(new Date(value));
+}
+
+function formatAllocation(entry: ExpenseEntrySummary, formatter: Intl.NumberFormat) {
+  if (entry.entryType === "credit" || entry.spreadDays <= 1) {
+    return "Single day";
+  }
+
+  return `${entry.spreadDays} days, ${formatter.format(entry.dailyAllocatedAmount)}/day`;
 }
 
 const inputClassName =

@@ -55,6 +55,10 @@ export type ExpenseEntrySummary = {
   id: string;
   entryType: ExpenseEntryType;
   amount: number;
+  spreadDays: number;
+  dailyAllocatedAmount: number;
+  spreadStartAt: string;
+  spreadEndAt: string;
   note: string;
   occurredAt: string;
 };
@@ -84,6 +88,7 @@ export type SaveExpenseEntryInput = {
   amount: number;
   note?: string;
   occurredAt: string;
+  spreadDays?: number;
 };
 
 export type SaveExpenseBudgetInput = {

@@ -30,6 +30,7 @@ type ExpenseEntryRecord = {
   userId: { toString(): string } | string;
   entryType: "expense" | "credit";
   amount: number;
+  spreadDays?: number;
   note?: string;
   occurredAt: Date;
   createdAt?: Date;
@@ -57,6 +58,20 @@ function ensurePositiveNumber(value: number, label: string) {
   }
 }
 
+function normalizeSpreadDays(value: number | undefined, entryType: "expense" | "credit") {
+  if (entryType === "credit") {
+    return 1;
+  }
+
+  const days = Number(value || 1);
+
+  if (!Number.isInteger(days) || days < 1 || days > 366) {
+    throw new Error("Days covered must be between 1 and 366.");
+  }
+
+  return days;
+}
+
 function ensureValidCycleTarget(startYear: number, startMonth: number) {
   if (!Number.isInteger(startYear) || startYear < 1900 || startYear > 9999) {
     throw new Error("Cycle year must be valid.");
@@ -68,10 +83,16 @@ function ensureValidCycleTarget(startYear: number, startMonth: number) {
 }
 
 function normalizeEntry(record: ExpenseEntryRecord): ExpenseEntrySummary {
+  const spreadDays = Math.max(1, record.spreadDays || 1);
+
   return {
     id: String(record._id),
     entryType: record.entryType,
     amount: record.amount,
+    spreadDays,
+    dailyAllocatedAmount: roundCurrency(record.amount / spreadDays),
+    spreadStartAt: getSpreadStartDate(record).toISOString(),
+    spreadEndAt: getSpreadEndDate(record).toISOString(),
     note: record.note || "",
     occurredAt: record.occurredAt.toISOString(),
   };
@@ -93,6 +114,72 @@ function isWithinRange(date: Date, start: Date, end: Date) {
   return date >= start && date <= end;
 }
 
+function getIstDayStart(date: Date) {
+  const parts = getIstParts(date);
+  return createUtcDateFromIstParts(parts.year, parts.monthIndex, parts.day);
+}
+
+function getIstDayEnd(date: Date) {
+  const parts = getIstParts(date);
+  return createUtcDateFromIstParts(parts.year, parts.monthIndex, parts.day, 23, 59, 59, 999);
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function getSpreadStartDate(entry: ExpenseEntryRecord) {
+  return getIstDayStart(entry.occurredAt);
+}
+
+function getSpreadEndDate(entry: ExpenseEntryRecord) {
+  return getIstDayEnd(addDays(getSpreadStartDate(entry), Math.max(1, entry.spreadDays || 1) - 1));
+}
+
+function countSpreadDaysInRange(entry: ExpenseEntryRecord, start: Date, end: Date, now: Date) {
+  const spreadStart = getSpreadStartDate(entry);
+  const spreadEnd = getIstDayStart(getSpreadEndDate(entry));
+  const windowStart = getIstDayStart(start);
+  const windowEnd = getIstDayStart(end);
+  const today = getIstDayStart(now);
+  const firstDay = new Date(
+    Math.max(spreadStart.getTime(), windowStart.getTime())
+  );
+  const lastDay = new Date(
+    Math.min(spreadEnd.getTime(), windowEnd.getTime(), today.getTime())
+  );
+
+  if (lastDay < firstDay) {
+    return 0;
+  }
+
+  return Math.floor((lastDay.getTime() - firstDay.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+}
+
+function getEntryAmountForWindow(entry: ExpenseEntryRecord, start: Date, end: Date, now: Date) {
+  if (entry.entryType === "credit") {
+    return isWithinRange(entry.occurredAt, start, end) ? roundCurrency(entry.amount) : 0;
+  }
+
+  const spreadDays = Math.max(1, entry.spreadDays || 1);
+
+  if (spreadDays === 1) {
+    return isWithinRange(entry.occurredAt, start, end) ? roundCurrency(entry.amount) : 0;
+  }
+
+  const overlappingDays = countSpreadDaysInRange(entry, start, end, now);
+  return overlappingDays > 0 ? roundCurrency((entry.amount * overlappingDays) / spreadDays) : 0;
+}
+
+function buildWindowEntries(entries: ExpenseEntryRecord[], start: Date, end: Date, now: Date) {
+  return entries
+    .map((entry) => ({
+      entryType: entry.entryType,
+      amount: getEntryAmountForWindow(entry, start, end, now),
+    }))
+    .filter((entry) => entry.amount > 0);
+}
+
 function buildDailyHistory(entries: ExpenseEntryRecord[], now: Date) {
   const todayParts = getIstParts(now);
 
@@ -111,7 +198,7 @@ function buildDailyHistory(entries: ExpenseEntryRecord[], now: Date) {
       59,
       999
     );
-    const dayEntries = entries.filter((entry) => isWithinRange(entry.occurredAt, dayStart, dayEnd));
+    const dayEntries = buildWindowEntries(entries, dayStart, dayEnd, now);
     const summary = computeWindowSummary("Daily", dayEntries);
 
     return {
@@ -135,7 +222,7 @@ function buildWeeklyHistory(entries: ExpenseEntryRecord[], now: Date) {
     const offsetWeeks = 7 - index;
     const weekStart = new Date(currentWeek.startDate.getTime() - offsetWeeks * 7 * 24 * 60 * 60 * 1000);
     const weekEnd = new Date(currentWeek.endDate.getTime() - offsetWeeks * 7 * 24 * 60 * 60 * 1000);
-    const weekEntries = entries.filter((entry) => isWithinRange(entry.occurredAt, weekStart, weekEnd));
+    const weekEntries = buildWindowEntries(entries, weekStart, weekEnd, now);
     const summary = computeWindowSummary("Weekly", weekEntries);
     const startLabel = new Intl.DateTimeFormat("en-IN", {
       day: "numeric",
@@ -166,8 +253,11 @@ function buildMonthlyHistory(entries: ExpenseEntryRecord[], now: Date) {
     const cycleStart = createUtcDateFromIstParts(currentCycle.startYear, startMonthIndex, 5);
     const cycleParts = getIstParts(cycleStart);
     const cycle = getExpenseCycleFromStart(cycleParts.year, cycleParts.monthIndex + 1);
-    const cycleEntries = entries.filter((entry) =>
-      isWithinRange(entry.occurredAt, new Date(cycle.startDate), new Date(cycle.endDate))
+    const cycleEntries = buildWindowEntries(
+      entries,
+      new Date(cycle.startDate),
+      new Date(cycle.endDate),
+      now
     );
     const summary = computeWindowSummary("Monthly", cycleEntries);
 
@@ -220,11 +310,9 @@ export async function getExpenseDashboard(
   const weekRange = getCurrentIstWeekRange(now);
   const cycleStart = new Date(cycle.startDate);
   const cycleEnd = new Date(cycle.endDate);
-  const todayEntries = entries.filter((entry) => isWithinRange(entry.occurredAt, todayStart, todayEnd));
-  const weekEntries = entries.filter((entry) =>
-    isWithinRange(entry.occurredAt, weekRange.startDate, weekRange.endDate)
-  );
-  const cycleEntries = entries.filter((entry) => isWithinRange(entry.occurredAt, cycleStart, cycleEnd));
+  const todayEntries = buildWindowEntries(entries, todayStart, todayEnd, now);
+  const weekEntries = buildWindowEntries(entries, weekRange.startDate, weekRange.endDate, now);
+  const cycleEntries = buildWindowEntries(entries, cycleStart, cycleEnd, now);
   const cycleSummary = computeWindowSummary("Current Cycle", cycleEntries);
   const totalPages = Math.max(1, Math.ceil(entries.length / EXPENSE_ENTRY_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -265,6 +353,7 @@ export async function saveExpenseEntry(userId: string, input: SaveExpenseEntryIn
     throw new Error("Entry type must be either expense or credit.");
   }
 
+  const spreadDays = normalizeSpreadDays(input.spreadDays, input.entryType);
   const occurredAt = parseIstDateTime(input.occurredAt);
 
   if (!occurredAt) {
@@ -298,6 +387,7 @@ export async function saveExpenseEntry(userId: string, input: SaveExpenseEntryIn
     userId,
     entryType: input.entryType,
     amount: roundCurrency(input.amount),
+    spreadDays,
     note: normalizeNote(input.note),
     occurredAt,
   });
