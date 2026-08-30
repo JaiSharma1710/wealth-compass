@@ -1,12 +1,18 @@
 "use client";
 
-import type { DashboardAssetClassSummary, DashboardGoalsSummary, DashboardSummary } from "@/lib/dashboard.types";
+import type {
+  DashboardAssetClassSummary,
+  DashboardDebtSummary,
+  DashboardGoalsSummary,
+  DashboardSummary,
+} from "@/lib/dashboard.types";
 
 export function DashboardSummaryCards({
   assetClasses,
   formatCurrency,
   formatSignedCurrency,
   formatPercent,
+  debtSummary,
   goalsSummary,
   summary,
 }: {
@@ -14,6 +20,7 @@ export function DashboardSummaryCards({
   formatCurrency: (value: number) => string;
   formatSignedCurrency: (value: number) => string;
   formatPercent: (value: number | null) => string;
+  debtSummary: DashboardDebtSummary;
   goalsSummary: DashboardGoalsSummary;
   summary: DashboardSummary;
 }) {
@@ -53,11 +60,16 @@ export function DashboardSummaryCards({
               label="Goal Completion"
               value={goalsSummary.empty ? "No goals yet" : formatPercent(goalsSummary.overallCompletionPercent)}
             />
+            <MetricCard
+              label="Debt Left"
+              tone={debtSummary.empty ? "neutral" : "negative"}
+              value={debtSummary.empty ? "No loans yet" : formatCurrency(debtSummary.totalOutstandingPrincipal)}
+            />
           </div>
         </div>
       </section>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         {assetClasses.map((assetClass) => (
           <AssetCard
             key={assetClass.key}
@@ -76,6 +88,20 @@ export function DashboardSummaryCards({
             <p>Saved: {formatCurrency(goalsSummary.totalSavedAmount)}</p>
             <p>Target: {formatCurrency(goalsSummary.totalTargetAmount)}</p>
             <p>Completed: {goalsSummary.completedGoalsCount}</p>
+          </div>
+        </section>
+        <section className="rounded-[24px] border border-[#dde5f1] bg-white p-4 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#7c8aa5]">Debt</p>
+          <p className="mt-3 text-2xl font-semibold tracking-tight text-[#132842]">
+            {debtSummary.activeLoans}
+          </p>
+          <div className="mt-3 space-y-1.5 text-sm text-[#5e6e88]">
+            <p>Outstanding: {formatCurrency(debtSummary.totalOutstandingPrincipal)}</p>
+            <p>Paid interest: {formatCurrency(debtSummary.totalPaidInterest)}</p>
+            <p>
+              Next EMI:{" "}
+              {debtSummary.nextEmiDate ? formatCurrency(debtSummary.nextEmiAmount) : "No pending EMI"}
+            </p>
           </div>
         </section>
       </div>

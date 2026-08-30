@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { Bell, Download, Loader2, X } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -22,9 +22,12 @@ export function DashboardView({
   const data = initialData;
   const [historyRange, setHistoryRange] = useState<DashboardHistoryRange>(initialData.historyRange);
   const [history, setHistory] = useState<DashboardHistoryPoint[]>(initialData.history);
+  const [historyAvailableRanges, setHistoryAvailableRanges] = useState<DashboardHistoryRange[]>(
+    initialData.historyAvailableRanges
+  );
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
   const [isReportDownloading, setIsReportDownloading] = useState(false);
-  const [isHistoryLoading, startHistoryTransition] = useTransition();
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const formatter = useMemo(
     () =>
       new Intl.NumberFormat("en-IN", {
@@ -77,26 +80,38 @@ export function DashboardView({
   }
 
   async function handleRangeChange(nextRange: DashboardHistoryRange) {
+    if (!historyAvailableRanges.includes(nextRange) || isHistoryLoading) {
+      return;
+    }
+
     setHistoryRange(nextRange);
+    setIsHistoryLoading(true);
 
-    startHistoryTransition(async () => {
-      try {
-        const response = await fetch(`/api/dashboard/history?range=${encodeURIComponent(nextRange)}`, {
-          cache: "no-store",
-        });
-        const result = (await response.json().catch(() => null)) as
-          | { history?: DashboardHistoryPoint[]; message?: string }
-          | null;
+    try {
+      const response = await fetch(`/api/dashboard/history?range=${encodeURIComponent(nextRange)}`, {
+        cache: "no-store",
+      });
+      const result = (await response.json().catch(() => null)) as
+        | {
+            history?: DashboardHistoryPoint[];
+            historyAvailableRanges?: DashboardHistoryRange[];
+            message?: string;
+            range?: DashboardHistoryRange;
+          }
+        | null;
 
-        if (!response.ok) {
-          throw new Error(result?.message || "Could not load dashboard history.");
-        }
-
-        setHistory(result?.history || []);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not load dashboard history.");
+      if (!response.ok) {
+        throw new Error(result?.message || "Could not load dashboard history.");
       }
-    });
+
+      setHistory(result?.history || []);
+      setHistoryRange(result?.range || nextRange);
+      setHistoryAvailableRanges(result?.historyAvailableRanges || historyAvailableRanges);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load dashboard history.");
+    } finally {
+      setIsHistoryLoading(false);
+    }
   }
 
   function getFilenameFromDisposition(disposition: string | null, fallback: string) {
@@ -239,6 +254,7 @@ export function DashboardView({
               formatCurrency={(value) => formatter.format(value)}
               formatSignedCurrency={formatSignedCurrency}
               formatPercent={formatPercent}
+              debtSummary={data.debtSummary}
               goalsSummary={data.goalsSummary}
               summary={data.summary}
             />
@@ -254,6 +270,7 @@ export function DashboardView({
               formatCompactCurrency={(value) => compactFormatter.format(value)}
               formatCurrency={(value) => formatter.format(value)}
               history={history}
+              availableRanges={historyAvailableRanges}
               isLoading={isHistoryLoading}
               onChangeRange={handleRangeChange}
               range={historyRange}

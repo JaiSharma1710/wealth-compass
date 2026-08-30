@@ -8,6 +8,7 @@ import {
   Coins,
   Compass,
   ClipboardCheck,
+  CreditCard,
   LayoutDashboard,
   Landmark,
   LineChart,
@@ -37,6 +38,7 @@ const navItems: NavItem[] = [
   { href: "/gold", icon: Coins, label: "Gold" },
   { href: "/expenses", icon: Landmark, label: "Expense Tracker" },
   { href: "/cash-and-reserves", icon: Wallet, label: "Cash and Reserves" },
+  { href: "/debt", icon: CreditCard, label: "Debt" },
   { href: "/goals", icon: Target, label: "Goals" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];

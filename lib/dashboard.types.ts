@@ -77,6 +77,22 @@ export type DashboardGoalsSummary = {
   empty: boolean;
 };
 
+export type DashboardDebtSummary = {
+  totalLoans: number;
+  activeLoans: number;
+  closedLoans: number;
+  totalOriginalPrincipal: number;
+  totalOutstandingPrincipal: number;
+  totalPaidAmount: number;
+  totalPaidPrincipal: number;
+  totalPaidInterest: number;
+  totalRemainingAmount: number;
+  totalInterestPayable: number;
+  nextEmiDate: string | null;
+  nextEmiAmount: number;
+  empty: boolean;
+};
+
 export type DashboardInsight = {
   id: string;
   tone: "neutral" | "positive" | "warning" | "negative";
@@ -90,13 +106,16 @@ export type DashboardData = {
   allocation: DashboardAllocationPoint[];
   recentActivity: DashboardRecentActivityItem[];
   goalsSummary: DashboardGoalsSummary;
+  debtSummary: DashboardDebtSummary;
   insights: DashboardInsight[];
   history: DashboardHistoryPoint[];
   historyRange: DashboardHistoryRange;
+  historyAvailableRanges: DashboardHistoryRange[];
   empty: boolean;
 };
 
 export type DashboardHistoryResponse = {
   range: DashboardHistoryRange;
   history: DashboardHistoryPoint[];
+  historyAvailableRanges: DashboardHistoryRange[];
 };

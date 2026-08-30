@@ -7,6 +7,8 @@ import {
   buildDashboardInsights,
   calculateAllocationPercent,
   calculateGainLossPercent,
+  filterHistoryByRange,
+  getAvailableHistoryRanges,
   roundCurrency,
   roundPercent,
   sortRecentActivity,
@@ -20,18 +22,21 @@ import {
 import type {
   DashboardAssetClassSummary,
   DashboardData,
+  DashboardDebtSummary,
   DashboardGoalsSummary,
   DashboardHistoryPoint,
   DashboardHistoryRange,
   DashboardRecentActivityItem,
   DashboardSummary,
 } from "@/lib/dashboard.types";
+import { getDebtPageData } from "@/lib/debt";
 import { getGoalsPageData } from "@/lib/goals";
 import { getGoldDashboard } from "@/lib/gold";
 import { getMutualFundDashboard } from "@/lib/mutual-funds";
 import { getStockDashboard } from "@/lib/stocks";
 
-const DEFAULT_HISTORY_RANGE: DashboardHistoryRange = "1M";
+const DEFAULT_HISTORY_RANGE: DashboardHistoryRange = "ALL";
+const CHART_HISTORY_RANGES: DashboardHistoryRange[] = ["1M", "3M", "6M", "1Y", "ALL"];
 
 type DashboardSnapshotPayload = {
   totalCurrentWorth: number;
@@ -79,6 +84,13 @@ function buildGoalsSummary(goalsPageData: Awaited<ReturnType<typeof getGoalsPage
         }
       : null,
     empty: goalsPageData.goals.length === 0,
+  };
+}
+
+function buildDebtSummary(debtPageData: Awaited<ReturnType<typeof getDebtPageData>>): DashboardDebtSummary {
+  return {
+    ...debtPageData.overview,
+    empty: debtPageData.loans.length === 0,
   };
 }
 
@@ -427,12 +439,13 @@ export async function saveDailyPortfolioValuesForUser(userId: string) {
 }
 
 export async function getDashboard(user: SafeUser): Promise<DashboardData> {
-  const [stocks, mutualFunds, gold, cash, goals] = await Promise.all([
+  const [stocks, mutualFunds, gold, cash, goals, debt] = await Promise.all([
     getStockDashboard(user.id),
     getMutualFundDashboard(user.id),
     getGoldDashboard(user.id),
     getCashReserveDashboard(user.id),
     getGoalsPageData(user),
+    getDebtPageData(user.id),
   ]);
 
   const assetClasses = createAssetClassSummaries({
@@ -443,8 +456,16 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
   });
   const summary = buildSummaryFromAssetClasses(assetClasses);
   const goalsSummary = buildGoalsSummary(goals);
+  const debtSummary = buildDebtSummary(debt);
 
-  const history = await getPortfolioHistory(user.id, DEFAULT_HISTORY_RANGE);
+  const allHistory = await getPortfolioHistory(user.id, "ALL");
+  const historyAvailableRanges = getAvailableHistoryRanges(allHistory, {
+    ranges: CHART_HISTORY_RANGES,
+  });
+  const historyRange = historyAvailableRanges.includes(DEFAULT_HISTORY_RANGE)
+    ? DEFAULT_HISTORY_RANGE
+    : historyAvailableRanges[0] || DEFAULT_HISTORY_RANGE;
+  const history = filterHistoryByRange(allHistory, historyRange);
   const allocation = attachAllocationPercent(
     assetClasses.map((assetClass) => ({
       key: assetClass.key,
@@ -466,6 +487,7 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
     allocation,
     recentActivity,
     goalsSummary,
+    debtSummary,
     insights: buildDashboardInsights({
       empty,
       hasStaleData: summary.hasStaleData,
@@ -479,7 +501,8 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
       goalsSummary,
     }),
     history,
-    historyRange: DEFAULT_HISTORY_RANGE,
+    historyRange,
+    historyAvailableRanges,
     empty,
   };
 }

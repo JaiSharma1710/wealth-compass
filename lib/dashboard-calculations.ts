@@ -260,6 +260,39 @@ export function filterHistoryByRange(
   return history.filter((point) => new Date(point.date) >= start);
 }
 
+export function getAvailableHistoryRanges(
+  history: DashboardHistoryPoint[],
+  options: {
+    ranges: DashboardHistoryRange[];
+    now?: Date;
+  }
+) {
+  const allTimeRange = options.ranges.includes("ALL") ? ["ALL" as const] : [];
+  const validDates = history
+    .map((point) => new Date(`${point.date}T00:00:00`))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((left, right) => left.getTime() - right.getTime());
+
+  if (!validDates.length) {
+    return allTimeRange;
+  }
+
+  const oldestDate = validDates[0];
+  const now = options.now || new Date();
+
+  const availableRanges = options.ranges.filter((range) => {
+    if (range === "ALL") {
+      return true;
+    }
+
+    const start = getHistoryRangeStart(range, now);
+
+    return Boolean(start && oldestDate <= start);
+  });
+
+  return availableRanges.includes("ALL") ? availableRanges : [...availableRanges, ...allTimeRange];
+}
+
 export function getDateKeyInTimeZone(date: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,

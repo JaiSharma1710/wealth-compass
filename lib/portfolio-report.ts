@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SafeUser } from "@/lib/auth";
 import { getCashReserveDashboard } from "@/lib/cash-reserves";
+import { getDebtLoanTypeLabel, getDebtPageData } from "@/lib/debt";
 import { getGoldDashboard } from "@/lib/gold";
 import { GOLD_INVESTMENT_OPTIONS } from "@/lib/gold.types";
 import { getMutualFundDashboard } from "@/lib/mutual-funds";
@@ -152,11 +153,12 @@ function buildProfileRows(user: SafeUser, generatedAt: string): ReportSection {
 }
 
 export async function buildPortfolioReport(user: SafeUser): Promise<PortfolioReport> {
-  const [stocks, mutualFunds, gold, cash, goldTransactions, cashEntries] = await Promise.all([
+  const [stocks, mutualFunds, gold, cash, debt, goldTransactions, cashEntries] = await Promise.all([
     getStockDashboard(user.id),
     getMutualFundDashboard(user.id),
     getGoldDashboard(user.id),
     getCashReserveDashboard(user.id),
+    getDebtPageData(user.id),
     GoldTransaction.find({ userId: user.id })
       .sort({ transactionDate: -1, createdAt: -1 })
       .lean() as Promise<GoldTransactionRecord[]>,
@@ -194,6 +196,86 @@ export async function buildPortfolioReport(user: SafeUser): Promise<PortfolioRep
         ["Total", totalCurrentValue, totalInvested, totalGainLoss, totalGainLossPct, ""],
       ],
     },
+    {
+      title: "Debt Summary",
+      headers: ["Metric", "Value"],
+      rows: [
+        ["Total loans", debt.overview.totalLoans],
+        ["Active loans", debt.overview.activeLoans],
+        ["Closed loans", debt.overview.closedLoans],
+        ["Original principal", debt.overview.totalOriginalPrincipal],
+        ["Outstanding principal", debt.overview.totalOutstandingPrincipal],
+        ["Paid amount", debt.overview.totalPaidAmount],
+        ["Paid principal", debt.overview.totalPaidPrincipal],
+        ["Paid interest", debt.overview.totalPaidInterest],
+        ["Remaining amount", debt.overview.totalRemainingAmount],
+        ["Total interest payable", debt.overview.totalInterestPayable],
+        ["Next EMI date", debt.overview.nextEmiDate ? formatDate(debt.overview.nextEmiDate) : ""],
+        ["Next EMI amount", debt.overview.nextEmiAmount],
+      ],
+    },
+    {
+      title: "Debt Loans",
+      headers: [
+        "Loan",
+        "Lender",
+        "Type",
+        "Principal",
+        "Interest %",
+        "Duration months",
+        "EMI date",
+        "EMI amount",
+        "Paid principal",
+        "Paid interest",
+        "Outstanding principal",
+        "Remaining amount",
+        "Progress %",
+        "Expected closure",
+      ],
+      rows: debt.loans.map((loan) => [
+        loan.name,
+        loan.lender,
+        getDebtLoanTypeLabel(loan.loanType),
+        loan.principalAmount,
+        loan.annualInterestRate,
+        loan.durationMonths,
+        loan.emiPaymentDay,
+        loan.emiAmount,
+        loan.paidPrincipal,
+        loan.paidInterest,
+        loan.remainingPrincipal,
+        loan.remainingAmount,
+        loan.progressPct,
+        loan.expectedClosureDate ? formatDate(loan.expectedClosureDate) : "",
+      ]),
+    },
+    ...debt.loans.map((loan): ReportSection => ({
+      title: `Debt Schedule - ${loan.name}`,
+      headers: [
+        "Installment",
+        "Due date",
+        "Opening balance",
+        "EMI",
+        "Principal",
+        "Interest",
+        "Prepayment",
+        "Total payment",
+        "Closing balance",
+        "Status",
+      ],
+      rows: loan.schedule.map((row) => [
+        row.installmentNumber,
+        formatDate(row.dueDate),
+        row.openingBalance,
+        row.emiAmount,
+        row.principalPaid,
+        row.interestPaid,
+        row.prepaymentAmount,
+        row.totalPayment,
+        row.closingBalance,
+        row.isPaid ? "Paid" : "Pending",
+      ]),
+    })),
     {
       title: "Stock Holdings",
       headers: [
