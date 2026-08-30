@@ -281,7 +281,7 @@ export function DashboardWealthChart({
   const availableRangeSet = new Set(availableRanges);
 
   return (
-    <section className="rounded-[28px] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+    <section className="rounded-[2rem] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-[#132842]">Wealth Movement</h2>
@@ -322,8 +322,19 @@ export function DashboardWealthChart({
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             >
               <CartesianGrid stroke="#e8eef7" strokeDasharray="4 4" />
-              <XAxis dataKey="label" minTickGap={18} tick={{ fill: "#6c7a93", fontSize: 12 }} />
-              <YAxis tick={{ fill: "#6c7a93", fontSize: 12 }} tickFormatter={formatCompactCurrency} />
+              <XAxis
+                axisLine={false}
+                dataKey="label"
+                minTickGap={18}
+                tick={{ fill: "#6c7a93", fontSize: 12 }}
+                tickLine={false}
+              />
+              <YAxis
+                axisLine={false}
+                tick={{ fill: "#6c7a93", fontSize: 12 }}
+                tickFormatter={formatCompactCurrency}
+                tickLine={false}
+              />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) {
@@ -344,7 +355,7 @@ export function DashboardWealthChart({
               <Bar
                 dataKey="totalValue"
                 name="totalValue"
-                radius={[8, 8, 0, 0]}
+                radius={[10, 10, 0, 0]}
               >
                 {chartHistory.map((point) => (
                   <Cell key={point.key} fill={getMovementColor(point.movement)} />

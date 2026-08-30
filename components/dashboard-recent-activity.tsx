@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 
 import type { DashboardAssetClassKey, DashboardRecentActivityItem } from "@/lib/dashboard.types";
 
+type ActivityFilterKey = DashboardAssetClassKey | "all";
+
 export function DashboardRecentActivity({
   activity,
   formatCurrency,
@@ -14,16 +16,17 @@ export function DashboardRecentActivity({
   formatCurrency: (value: number) => string;
   formatDate: (value: string) => string;
 }) {
-  const [selectedAssetKey, setSelectedAssetKey] = useState<DashboardAssetClassKey>("cash");
+  const [selectedAssetKey, setSelectedAssetKey] = useState<ActivityFilterKey>("all");
   const filteredActivity = useMemo(
     () =>
       activity
-        .filter((item) => item.assetClassKey === selectedAssetKey)
+        .filter((item) => (selectedAssetKey === "all" ? true : item.assetClassKey === selectedAssetKey))
         .slice(0, 5),
     [activity, selectedAssetKey]
   );
 
-  const assetPills: Array<{ key: DashboardAssetClassKey; label: string }> = [
+  const assetPills: Array<{ key: ActivityFilterKey; label: string }> = [
+    { key: "all", label: "All" },
     { key: "cash", label: "Cash" },
     { key: "gold", label: "Gold" },
     { key: "stocks", label: "Stocks" },
@@ -31,7 +34,7 @@ export function DashboardRecentActivity({
   ];
 
   return (
-    <section className="rounded-[28px] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+    <section className="h-full rounded-[2rem] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
       <div className="mb-5 flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-[#132842]">Recent Activity</h2>
@@ -57,11 +60,11 @@ export function DashboardRecentActivity({
       </div>
 
       {filteredActivity.length ? (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {filteredActivity.map((item) => (
             <Link
               key={item.id}
-              className="block rounded-2xl bg-[#f8fbff] px-4 py-3 transition hover:bg-[#f2f7ff]"
+              className="block rounded-2xl border border-[#edf2f7] bg-[#f8fbff] px-4 py-3 transition hover:border-[#c8d8ee] hover:bg-[#f2f7ff]"
               href={item.href}
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

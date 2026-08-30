@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Bell, Download, Loader2, X } from "lucide-react";
+import { Bell, Download, Loader2, TrendingUp, X } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { DashboardAssetAllocation } from "@/components/dashboard-asset-allocation";
@@ -164,49 +164,76 @@ export function DashboardView({
       <section className="flex min-h-full flex-col gap-5 px-3 py-4 sm:gap-6 sm:px-6 lg:px-8">
         <div className="overflow-hidden rounded-[2rem] border border-[#dce3ef] bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
           <div className="px-5 py-5 sm:px-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#7c8aa5]">
-                Overview
-              </p>
-              <h1 className="text-2xl font-semibold tracking-tight text-[#10203a] sm:text-3xl">
-                Track your total wealth
-              </h1>
-              <p className="text-sm text-[#72829a]">
-                Last updated:{" "}
-                {data.summary.lastUpdatedAt ? formatDateTime(data.summary.lastUpdatedAt) : "Not yet"}
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-              <button
-                aria-label="Download detailed portfolio report"
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#d6e0ef] bg-white px-4 text-sm font-semibold text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:rounded-full"
-                disabled={isReportDownloading}
-                onClick={handleReportDownload}
-                title="Download XLS and PDF report"
-                type="button"
-              >
-                {isReportDownloading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="h-4 w-4" />
-                )}
-                <span>Download</span>
-              </button>
-              <button
-                className="relative inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#d6e0ef] bg-white text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] sm:w-11 sm:rounded-full"
-                onClick={() => setIsInsightsOpen(true)}
-                type="button"
-              >
-                <Bell className="h-4 w-4" />
-                {data.insights.length ? (
-                  <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[#173d7a] px-1.5 py-0.5 text-[11px] font-semibold text-white">
-                    {data.insights.length}
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-[#72829a]">
+                  <span>
+                    Last updated:{" "}
+                    {data.summary.lastUpdatedAt ? formatDateTime(data.summary.lastUpdatedAt) : "Not yet"}
                   </span>
-                ) : null}
-              </button>
+                </div>
+                <div className="mt-7 grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-end">
+                  <div>
+                    <p className="text-base font-semibold text-[#10203a]">Your total wealth</p>
+                    <h2 className="mt-3 break-words text-4xl font-semibold tracking-tight text-[#061b49] sm:text-5xl">
+                      {formatter.format(data.summary.totalCurrentWorth)}
+                    </h2>
+                    <div className="mt-7">
+                      <p className="text-sm font-semibold text-[#223655]">Today&apos;s movement</p>
+                      <div
+                        className={`mt-2 inline-flex items-center gap-2 text-sm font-semibold ${
+                          data.summary.todayGainLoss == null
+                            ? "text-[#72829a]"
+                            : data.summary.todayGainLoss >= 0
+                              ? "text-[#0f9f5f]"
+                              : "text-[#c2410c]"
+                        }`}
+                      >
+                        <TrendingUp className="size-4" />
+                        <span>
+                          {data.summary.todayGainLoss == null
+                            ? "Unavailable"
+                            : `${formatSignedCurrency(data.summary.todayGainLoss)} (${formatPercent(
+                                data.summary.todayGainLossPercent
+                              )})`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <HeroSparkline history={history} />
+                </div>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:justify-end">
+                <button
+                  aria-label="Download detailed portfolio report"
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#d6e0ef] bg-white px-4 text-sm font-semibold text-[#234067] shadow-[0_10px_22px_rgba(15,23,42,0.04)] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:rounded-full"
+                  disabled={isReportDownloading}
+                  onClick={handleReportDownload}
+                  title="Download XLS and PDF report"
+                  type="button"
+                >
+                  {isReportDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  <span>Download</span>
+                </button>
+                <button
+                  aria-label="Open insights and alerts"
+                  className="relative inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#d6e0ef] bg-white text-[#234067] shadow-[0_10px_22px_rgba(15,23,42,0.04)] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] sm:w-11 sm:rounded-full"
+                  onClick={() => setIsInsightsOpen(true)}
+                  type="button"
+                >
+                  <Bell className="h-4 w-4" />
+                  {data.insights.length ? (
+                    <span className="absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-[#173d7a] px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                      {data.insights.length}
+                    </span>
+                  ) : null}
+                </button>
+              </div>
             </div>
-          </div>
           </div>
 
           {data.summary.hasStaleData ? (
@@ -256,8 +283,7 @@ export function DashboardView({
               formatCurrency={(value) => formatter.format(value)}
               formatSignedCurrency={formatSignedCurrency}
               formatPercent={formatPercent}
-              debtSummary={data.debtSummary}
-              goalsSummary={data.goalsSummary}
+              history={history}
               summary={data.summary}
             />
 
@@ -330,17 +356,19 @@ export function DashboardView({
               </div>
             </section>
 
-            <DashboardGoalsSummarySection
-              formatCurrency={(value) => formatter.format(value)}
-              formatPercent={formatPercent}
-              goalsSummary={data.goalsSummary}
-            />
+            <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+              <DashboardGoalsSummarySection
+                formatCurrency={(value) => formatter.format(value)}
+                formatPercent={formatPercent}
+                goalsSummary={data.goalsSummary}
+              />
 
-            <DashboardRecentActivity
-              activity={data.recentActivity}
-              formatCurrency={(value) => formatter.format(value)}
-              formatDate={formatDate}
-            />
+              <DashboardRecentActivity
+                activity={data.recentActivity}
+                formatCurrency={(value) => formatter.format(value)}
+                formatDate={formatDate}
+              />
+            </div>
           </>
         )}
       </section>
@@ -394,4 +422,57 @@ export function DashboardView({
       ) : null}
     </div>
   );
+}
+
+function HeroSparkline({ history }: { history: DashboardHistoryPoint[] }) {
+  const points = history.slice(-42).map((point) => point.totalValue);
+  const path = createSparklinePath(points, 420, 132);
+
+  return (
+    <div className="flex min-h-[10rem] items-end">
+      <svg
+        aria-hidden="true"
+        className="h-40 w-full overflow-visible"
+        preserveAspectRatio="none"
+        viewBox="0 0 420 160"
+      >
+        <defs>
+          <linearGradient id="heroSparklineFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <line stroke="#cbd5e1" strokeDasharray="4 4" x1="0" x2="420" y1="142" y2="142" />
+        {path ? (
+          <>
+            <path d={`${path} L 420 142 L 0 142 Z`} fill="url(#heroSparklineFill)" />
+            <path d={path} fill="none" stroke="#2563eb" strokeLinecap="round" strokeWidth="3" />
+          </>
+        ) : (
+          <path d="M0 142 L420 142" fill="none" stroke="#cbd5e1" strokeDasharray="5 5" />
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function createSparklinePath(values: number[], width: number, height: number) {
+  const filteredValues = values.filter((value) => Number.isFinite(value));
+
+  if (filteredValues.length < 2) {
+    return "";
+  }
+
+  const min = Math.min(...filteredValues);
+  const max = Math.max(...filteredValues);
+  const range = max - min || 1;
+
+  return filteredValues
+    .map((value, index) => {
+      const x = (index / (filteredValues.length - 1)) * width;
+      const y = 16 + (1 - (value - min) / range) * height;
+
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
 }
