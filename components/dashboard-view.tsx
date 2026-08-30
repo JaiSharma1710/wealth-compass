@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
-import { Bell, X } from "lucide-react";
+import { Bell, Download, Loader2, X } from "lucide-react";
 import toast from "react-hot-toast";
 
 import { DashboardAssetAllocation } from "@/components/dashboard-asset-allocation";
@@ -23,6 +23,7 @@ export function DashboardView({
   const [historyRange, setHistoryRange] = useState<DashboardHistoryRange>(initialData.historyRange);
   const [history, setHistory] = useState<DashboardHistoryPoint[]>(initialData.history);
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
+  const [isReportDownloading, setIsReportDownloading] = useState(false);
   const [isHistoryLoading, startHistoryTransition] = useTransition();
   const formatter = useMemo(
     () =>
@@ -98,6 +99,51 @@ export function DashboardView({
     });
   }
 
+  function getFilenameFromDisposition(disposition: string | null, fallback: string) {
+    const match = /filename="?([^"]+)"?/i.exec(disposition || "");
+
+    return match?.[1] || fallback;
+  }
+
+  async function downloadReportFile(format: "xls" | "pdf") {
+    const response = await fetch(`/api/portfolio-report?format=${format}`, {
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      const result = (await response.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(result?.message || `Could not download ${format.toUpperCase()} report.`);
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = getFilenameFromDisposition(
+      response.headers.get("Content-Disposition"),
+      `wealth-compass-portfolio-report.${format}`
+    );
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleReportDownload() {
+    setIsReportDownloading(true);
+
+    try {
+      await downloadReportFile("xls");
+      // await downloadReportFile("pdf");
+      toast.success("Portfolio report downloaded.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not download portfolio report.");
+    } finally {
+      setIsReportDownloading(false);
+    }
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-[#f5f7fb]">
       <section className="flex min-h-full flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
@@ -116,6 +162,21 @@ export function DashboardView({
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <button
+                aria-label="Download detailed portfolio report"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#d6e0ef] bg-white px-4 text-sm font-semibold text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isReportDownloading}
+                onClick={handleReportDownload}
+                title="Download XLS and PDF report"
+                type="button"
+              >
+                {isReportDownloading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                <span>Download</span>
+              </button>
               <button
                 className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#d6e0ef] bg-white text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff]"
                 onClick={() => setIsInsightsOpen(true)}
