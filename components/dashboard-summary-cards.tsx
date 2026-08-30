@@ -26,17 +26,17 @@ export function DashboardSummaryCards({
 }) {
   return (
     <div className="space-y-4">
-      <section className="rounded-[28px] border border-[#dce4f0] bg-white p-6 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+      <section className="rounded-[2rem] border border-[#dce4f0] bg-white p-5 shadow-[0_18px_42px_rgba(15,23,42,0.05)] sm:p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#7c8aa5]">
               Total Current Worth
             </p>
-            <h2 className="text-4xl font-semibold tracking-tight text-[#10203a]">
+            <h2 className="break-words text-3xl font-semibold tracking-tight text-[#10203a] sm:text-4xl">
               {formatCurrency(summary.totalCurrentWorth)}
             </h2>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:max-w-4xl xl:grid-cols-5">
             <MetricCard label="Invested" value={formatCurrency(summary.totalInvested)} />
             <MetricCard
               label="Gain / Loss"
@@ -69,7 +69,7 @@ export function DashboardSummaryCards({
         </div>
       </section>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
         {assetClasses.map((assetClass) => (
           <AssetCard
             key={assetClass.key}
@@ -126,9 +126,9 @@ function MetricCard({
         : "text-[#132842]";
 
   return (
-    <div className="rounded-2xl bg-[#f7faff] px-4 py-3">
+    <div className="rounded-2xl border border-[#edf2f7] bg-[#f7faff] px-4 py-3">
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#7c8aa5]">{label}</p>
-      <p className={`mt-2 text-base font-semibold ${toneClass}`}>{value}</p>
+      <p className={`mt-2 break-words text-base font-semibold ${toneClass}`}>{value}</p>
     </div>
   );
 }
@@ -152,13 +152,13 @@ function AssetCard({
         : "text-[#132842]";
 
   return (
-    <section className="rounded-[24px] border border-[#dde5f1] bg-white p-4 shadow-[0_14px_32px_rgba(15,23,42,0.04)]">
+    <section className="rounded-[1.5rem] border border-[#dde5f1] bg-white p-4 shadow-[0_14px_32px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_38px_rgba(15,23,42,0.07)]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#7c8aa5]">
             {assetClass.label}
           </p>
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-[#132842]">
+          <p className="mt-2 break-words text-2xl font-semibold tracking-tight text-[#132842]">
             {formatCurrency(assetClass.currentValue)}
           </p>
         </div>

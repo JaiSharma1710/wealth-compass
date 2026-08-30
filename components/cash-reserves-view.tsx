@@ -265,14 +265,14 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
+    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-3 sm:p-6">
       <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
         <div className="grid gap-4 xl:grid-cols-[1.45fr_0.9fr_0.9fr]">
-          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
+          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] sm:p-6">
+            <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-neutral-500">Total Cash Reserve</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
+                <h2 className="mt-3 break-words text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
                   {formatter.format(initialData.totalBalance)}
                 </h2>
                 <div
@@ -289,7 +289,7 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
               </div>
 
               <button
-                className="inline-flex items-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 text-sm font-semibold text-white transition hover:opacity-90 sm:w-auto"
                 onClick={() => setIsModalOpen(true)}
                 type="button"
               >
@@ -314,13 +314,13 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
           />
         </div>
 
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Money Distribution by Bank</h3>
               <p className="mt-1 text-sm text-neutral-500">Current reserve balance split across selected banks.</p>
             </div>
-            <div className="text-right">
+            <div className="text-left sm:text-right">
               <p className="text-sm font-medium text-neutral-500">Total Money in Reserves</p>
               <p className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">
                 {formatter.format(initialData.totalBalance)}
@@ -332,7 +332,7 @@ export function CashReservesView({ banks, currencyCode, initialData }: CashReser
             {initialData.bankDistribution.length ? (
               initialData.bankDistribution.map((entry) => (
                 <div
-                  className="rounded-[1.25rem] border border-[#eef2f7] bg-[#fafaf8] p-4"
+                  className="rounded-[1.25rem] border border-[#eef2f7] bg-[#fafaf8] p-4 transition hover:-translate-y-0.5 hover:shadow-[0_14px_28px_rgba(15,23,42,0.06)]"
                   key={entry.bank}
                 >
                   <div className="flex items-start justify-between gap-3">

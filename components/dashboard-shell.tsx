@@ -28,20 +28,22 @@ type NavItem = {
   href: string;
   icon: LucideIcon;
   label: string;
+  group: "Overview" | "Portfolio" | "Planning" | "Account";
 };
 
 const navItems: NavItem[] = [
-  { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/market-approvals", icon: ClipboardCheck, label: "Market Approvals" },
-  { href: "/stocks", icon: LineChart, label: "Stocks" },
-  { href: "/mutual-funds", icon: PieChart, label: "Mutual Funds" },
-  { href: "/gold", icon: Coins, label: "Gold" },
-  { href: "/expenses", icon: Landmark, label: "Expense Tracker" },
-  { href: "/cash-and-reserves", icon: Wallet, label: "Cash and Reserves" },
-  { href: "/debt", icon: CreditCard, label: "Debt" },
-  { href: "/goals", icon: Target, label: "Goals" },
-  { href: "/settings", icon: Settings, label: "Settings" },
+  { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard", group: "Overview" },
+  { href: "/stocks", icon: LineChart, label: "Stocks", group: "Portfolio" },
+  { href: "/mutual-funds", icon: PieChart, label: "Mutual Funds", group: "Portfolio" },
+  { href: "/gold", icon: Coins, label: "Gold", group: "Portfolio" },
+  { href: "/cash-and-reserves", icon: Wallet, label: "Cash and Reserves", group: "Portfolio" },
+  { href: "/expenses", icon: Landmark, label: "Expenses", group: "Planning" },
+  { href: "/debt", icon: CreditCard, label: "Debt", group: "Planning" },
+  { href: "/goals", icon: Target, label: "Goals", group: "Planning" },
+  { href: "/market-approvals", icon: ClipboardCheck, label: "Market Approvals", group: "Account" },
+  { href: "/settings", icon: Settings, label: "Settings", group: "Account" },
 ];
+const navGroups: NavItem["group"][] = ["Overview", "Portfolio", "Planning", "Account"];
 
 export function DashboardShell({
   children,
@@ -80,7 +82,7 @@ export function DashboardShell({
   }, []);
 
   return (
-    <div className="wc-protected min-h-svh bg-[linear-gradient(180deg,#f7f7f4_0%,#edf1ea_100%)]">
+    <div className="wc-protected min-h-svh bg-[#f5f7fb]">
       {mobileOpen ? (
         <button
           aria-label="Close sidebar overlay"
@@ -94,9 +96,10 @@ export function DashboardShell({
         className={cn(
           "fixed inset-y-0 left-0 z-40 flex w-[16.5rem] flex-col border-r border-[#e6ebf2] bg-white transition-transform duration-300",
           mobileOpen ? "translate-x-0" : "-translate-x-[115%] md:translate-x-0",
+          "shadow-[18px_0_60px_rgba(15,23,42,0.08)] md:shadow-none",
         )}
       >
-        <div className="flex h-[4.5rem] items-center border-b border-[#e6ebf2] px-8">
+        <div className="flex h-[4.5rem] items-center border-b border-[#e6ebf2] px-6">
           <Link
             className="flex min-w-0 items-center gap-3"
             href="/dashboard"
@@ -115,39 +118,58 @@ export function DashboardShell({
           <X className="size-4" />
         </button>
 
-        <nav className="flex flex-1 flex-col px-5 py-6">
-          <div className="flex flex-col gap-1.5">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = pathname === item.href;
+        <nav className="flex flex-1 flex-col overflow-y-auto px-4 py-5">
+          <div className="flex flex-col gap-5">
+            {navGroups.map((group) => (
+              <div key={group}>
+                <p className="px-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-neutral-400">
+                  {group}
+                </p>
+                <div className="mt-2 flex flex-col gap-1">
+                  {navItems
+                    .filter((item) => item.group === group)
+                    .map((item) => {
+                      const Icon = item.icon;
+                      const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 
-              return (
-                <Link
-                  key={item.href}
-                  className={cn(
-                    "relative flex items-center gap-3 rounded-2xl px-5 py-3 text-[1.02rem] font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-950",
-                    active && "bg-[#f2f5ef] text-neutral-950",
-                  )}
-                  href={item.href}
-                  onClick={() => setMobileOpen(false)}
-                >
-                  <span
-                    className={cn(
-                      "absolute left-[-1.25rem] top-1/2 h-11 w-1 -translate-y-1/2 rounded-r-full bg-transparent transition-colors",
-                      active && "bg-[#111111]",
-                    )}
-                  />
-                  <Icon className="size-5 shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              );
-            })}
+                      return (
+                        <Link
+                          key={item.href}
+                          className={cn(
+                            "group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 text-[0.95rem] font-medium text-neutral-500 transition hover:bg-[#f5f7fb] hover:text-neutral-950",
+                            active && "bg-[#111111] text-white shadow-[0_10px_28px_rgba(17,17,17,0.14)] hover:bg-[#111111] hover:text-white",
+                          )}
+                          href={item.href}
+                          onClick={() => setMobileOpen(false)}
+                        >
+                          <span
+                            className={cn(
+                              "flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#f4f7fb] text-neutral-500 transition group-hover:bg-white group-hover:text-neutral-950",
+                              active && "bg-white/12 text-white group-hover:bg-white/12 group-hover:text-white",
+                            )}
+                          >
+                            <Icon className="size-4" />
+                          </span>
+                          <span className="truncate">{item.label}</span>
+                        </Link>
+                      );
+                    })}
+                </div>
+              </div>
+            ))}
           </div>
         </nav>
+
+        <div className="border-t border-[#e6ebf2] p-4">
+          <div className="rounded-2xl bg-[#f8fafc] px-4 py-3">
+            <p className="truncate text-sm font-semibold text-neutral-950">{user.fullName}</p>
+            <p className="mt-0.5 truncate text-xs text-neutral-500">{user.email}</p>
+          </div>
+        </div>
       </aside>
 
       <div className="min-h-svh md:pl-[16.5rem]">
-        <header className="sticky top-0 z-20 flex h-[4.5rem] items-center justify-between border-b border-[#e6ebf2] bg-white px-5 sm:px-8">
+        <header className="sticky top-0 z-20 flex h-[4.5rem] items-center justify-between border-b border-[#e6ebf2] bg-white/90 px-4 backdrop-blur-xl sm:px-8">
           <div className="flex items-center gap-4">
             <button
               aria-label="Open navigation"
@@ -157,7 +179,7 @@ export function DashboardShell({
             >
               <Menu className="size-5" />
             </button>
-            <h1 className="text-[1.5rem] font-semibold tracking-tight text-neutral-950 sm:text-[1.7rem]">
+            <h1 className="truncate text-[1.25rem] font-semibold tracking-tight text-neutral-950 sm:text-[1.7rem]">
               {pageTitle}
             </h1>
           </div>
@@ -172,7 +194,7 @@ export function DashboardShell({
                 aria-expanded={accountMenuOpen}
                 aria-haspopup="menu"
                 aria-label="Open account menu"
-                className="flex size-12 items-center justify-center rounded-full bg-[#111111] text-sm font-semibold text-white transition hover:opacity-90"
+                className="flex size-11 items-center justify-center rounded-2xl bg-[#111111] text-sm font-semibold text-white shadow-[0_10px_24px_rgba(17,17,17,0.18)] transition hover:opacity-90 sm:size-12 sm:rounded-full"
                 onClick={() => setAccountMenuOpen((current) => !current)}
                 type="button"
               >
@@ -180,7 +202,19 @@ export function DashboardShell({
               </button>
 
               {accountMenuOpen ? (
-                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-30 min-w-44 rounded-2xl border border-[#e6ebf2] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]">
+                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-30 min-w-56 rounded-2xl border border-[#e6ebf2] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]">
+                  <div className="border-b border-[#eef2f7] px-3 py-2.5">
+                    <p className="truncate text-sm font-semibold text-neutral-950">{user.fullName}</p>
+                    <p className="mt-0.5 truncate text-xs text-neutral-500">{user.email}</p>
+                  </div>
+                  <Link
+                    className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 hover:text-neutral-950"
+                    href="/settings"
+                    onClick={() => setAccountMenuOpen(false)}
+                  >
+                    <Settings className="size-4 shrink-0" />
+                    <span>Settings</span>
+                  </Link>
                   <form action="/api/signout" method="post">
                     <button
                       className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 hover:text-neutral-950"

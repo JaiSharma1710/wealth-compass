@@ -12,6 +12,7 @@ import {
   CreditCard,
   Eye,
   EyeOff,
+  Gauge,
   Plus,
   Trash2,
   WalletCards,
@@ -62,6 +63,14 @@ export function DebtView({
   const [expandedLoanId, setExpandedLoanId] = useState<string | null>(null);
   const [formState, setFormState] = useState<DebtFormState>(DEFAULT_FORM_STATE);
   const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
+  const repaymentProgress = initialData.overview.totalOriginalPrincipal
+    ? Math.min(
+        100,
+        (initialData.overview.totalPaidPrincipal /
+          initialData.overview.totalOriginalPrincipal) *
+          100
+      )
+    : 0;
 
   async function handleCreateLoan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -136,9 +145,83 @@ export function DebtView({
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
+    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-3 sm:p-6">
       <div className="mx-auto flex max-w-[96rem] flex-col gap-6">
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="overflow-hidden rounded-[2rem] border border-[#dce4f0] bg-white shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+          <div className="grid gap-0 lg:grid-cols-[1.25fr_0.75fr]">
+            <div className="p-5 sm:p-6">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                <div className="max-w-2xl">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#7c8aa5]">
+                    Debt
+                  </p>
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#10203a] sm:text-3xl">
+                    Loans and EMI plan
+                  </h2>
+                </div>
+                <button
+                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#111111] px-5 text-sm font-semibold text-white transition hover:opacity-95 sm:w-auto"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  type="button"
+                >
+                  <Plus className="size-4" />
+                  Add loan
+                </button>
+              </div>
+
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <DebtMiniStat
+                  label="Original principal"
+                  value={formatter.format(initialData.overview.totalOriginalPrincipal)}
+                />
+                <DebtMiniStat
+                  label="Outstanding"
+                  tone="danger"
+                  value={formatter.format(initialData.overview.totalOutstandingPrincipal)}
+                />
+                <DebtMiniStat
+                  label="Principal paid"
+                  tone="success"
+                  value={formatter.format(initialData.overview.totalPaidPrincipal)}
+                />
+              </div>
+            </div>
+
+            <div className="border-t border-[#e6ebf2] bg-[#f8fbff] p-5 sm:p-6 lg:border-l lg:border-t-0">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[#51627d]">Repayment progress</p>
+                  <p className="mt-1 text-3xl font-semibold tracking-tight text-[#132842]">
+                    {repaymentProgress.toFixed(1)}%
+                  </p>
+                </div>
+                <div className="flex size-12 items-center justify-center rounded-2xl bg-white text-[#173d7a] shadow-sm">
+                  <Gauge className="size-5" />
+                </div>
+              </div>
+              <div className="mt-5 h-3 overflow-hidden rounded-full bg-[#dfe8f5]">
+                <div
+                  className="h-full rounded-full bg-[linear-gradient(90deg,#15803d_0%,#22c55e_100%)]"
+                  style={{ width: `${Math.max(repaymentProgress, initialData.overview.totalLoans ? 4 : 0)}%` }}
+                />
+              </div>
+              <div className="mt-5 rounded-2xl bg-white px-4 py-3 text-sm text-[#566883] shadow-sm">
+                <p className="font-semibold text-[#17304f]">
+                  {initialData.overview.nextEmiDate
+                    ? `Next EMI on ${formatDate(initialData.overview.nextEmiDate)}`
+                    : "No pending EMI"}
+                </p>
+                <p className="mt-1">
+                  {initialData.overview.nextEmiDate
+                    ? formatter.format(initialData.overview.nextEmiAmount)
+                    : "All visible loans are fully paid."}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <TopStat
             icon={CreditCard}
             label="Active Loans"
@@ -167,27 +250,8 @@ export function DebtView({
           />
         </section>
 
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-medium text-neutral-500">Debt</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">
-                Track loans, EMIs, interest, and prepayments
-              </h2>
-            </div>
-            <button
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#111111] px-5 text-sm font-semibold text-white transition hover:opacity-95"
-              onClick={() => setIsCreateModalOpen(true)}
-              type="button"
-            >
-              <Plus className="size-4" />
-              Add loan
-            </button>
-          </div>
-        </section>
-
         {initialData.loans.length ? (
-          <section className="space-y-4">
+          <section className="grid gap-4">
             {initialData.loans.map((loan) => (
               <LoanCard
                 formatter={formatter}
@@ -203,7 +267,7 @@ export function DebtView({
             ))}
           </section>
         ) : (
-          <section className="flex min-h-[24rem] items-center justify-center rounded-[2rem] border border-dashed border-[#d8deea] bg-white p-8 text-center shadow-sm">
+          <section className="flex min-h-[24rem] items-center justify-center rounded-[2rem] border border-dashed border-[#d8deea] bg-white p-6 text-center shadow-sm sm:p-8">
             <div className="max-w-md">
               <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-[#f4f7fb] text-neutral-700">
                 <CreditCard className="size-6" />
@@ -227,8 +291,8 @@ export function DebtView({
               onClick={() => setIsCreateModalOpen(false)}
               type="button"
             />
-            <section className="relative z-10 max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_32px_120px_rgba(15,23,42,0.28)]">
-              <div className="flex items-start justify-between gap-4">
+            <section className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[2rem] border border-[#e6ebf2] bg-white shadow-[0_32px_120px_rgba(15,23,42,0.28)]">
+              <div className="flex items-start justify-between gap-4 border-b border-[#edf2f7] px-5 py-5 sm:px-6">
                 <div>
                   <p className="text-sm font-medium text-neutral-500">Create Loan</p>
                   <h3 className="mt-2 text-2xl font-semibold tracking-tight text-neutral-950">
@@ -244,7 +308,8 @@ export function DebtView({
                 </button>
               </div>
 
-              <form className="mt-6 space-y-4" onSubmit={handleCreateLoan}>
+              <form className="overflow-y-auto px-5 py-5 sm:px-6" onSubmit={handleCreateLoan}>
+                <div className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Loan name">
                     <input
@@ -402,8 +467,9 @@ export function DebtView({
                     value={formState.note}
                   />
                 </Field>
+                </div>
 
-                <div className="flex gap-3">
+                <div className="sticky bottom-0 -mx-5 mt-6 flex flex-col gap-3 border-t border-[#edf2f7] bg-white/95 px-5 py-4 backdrop-blur sm:-mx-6 sm:flex-row sm:px-6">
                   <button
                     className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-[#111111] text-sm font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isSubmitting || isPending}
@@ -413,7 +479,7 @@ export function DebtView({
                     <ArrowRight className="size-4" />
                   </button>
                   <button
-                    className="h-12 rounded-2xl border border-[#dbe2ee] px-5 text-sm font-semibold text-neutral-700 transition hover:border-neutral-950 hover:text-neutral-950"
+                    className="h-12 rounded-2xl border border-[#dbe2ee] px-5 text-sm font-semibold text-neutral-700 transition hover:border-neutral-950 hover:text-neutral-950 sm:w-auto"
                     onClick={() => setIsCreateModalOpen(false)}
                     type="button"
                   >
@@ -454,6 +520,32 @@ function TopStat({
   );
 }
 
+function DebtMiniStat({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "danger";
+}) {
+  const valueClass =
+    tone === "success"
+      ? "text-[#0f7a56]"
+      : tone === "danger"
+        ? "text-[#b23434]"
+        : "text-[#132842]";
+
+  return (
+    <div className="rounded-2xl border border-[#edf2f7] bg-[#fbfcfe] px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#7c8aa5]">
+        {label}
+      </p>
+      <p className={`mt-2 break-words text-base font-semibold ${valueClass}`}>{value}</p>
+    </div>
+  );
+}
+
 function Field({
   label,
   children,
@@ -487,7 +579,8 @@ function LoanCard({
   const isClosed = loan.remainingPrincipal <= 0.01;
 
   return (
-    <article className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-sm sm:p-6">
+    <article className="overflow-hidden rounded-[2rem] border border-[#e6ebf2] bg-white shadow-[0_14px_34px_rgba(15,23,42,0.04)]">
+      <div className="p-5 sm:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
@@ -521,19 +614,33 @@ function LoanCard({
             ) : null}
           </div>
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricPill label="Outstanding" tone="warning" value={formatter.format(loan.remainingPrincipal)} />
-            <MetricPill label="EMI" tone="default" value={formatter.format(loan.emiAmount)} />
+          <div className="mt-5 grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-[1.6rem] border border-[#fed7aa] bg-[#fff7ed] p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a3412]">
+                Outstanding principal
+              </p>
+              <p className="mt-2 break-words text-2xl font-semibold tracking-tight text-[#9a3412]">
+                {formatter.format(loan.remainingPrincipal)}
+              </p>
+              <p className="mt-2 text-sm text-[#9a3412]/75">
+                Left to pay: {formatter.format(loan.remainingAmount)}
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricPill label="EMI" tone="default" value={formatter.format(loan.emiAmount)} />
+              <MetricPill
+                label="Installments"
+                tone="default"
+                value={`${loan.paidInstallments}/${loan.schedule.length}`}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <MetricPill label="Paid principal" tone="success" value={formatter.format(loan.paidPrincipal)} />
             <MetricPill label="Paid interest" tone="default" value={formatter.format(loan.paidInterest)} />
-            <MetricPill label="Left to pay" tone="warning" value={formatter.format(loan.remainingAmount)} />
             <MetricPill label="Total interest" tone="default" value={formatter.format(loan.totalInterest)} />
             <MetricPill label="Prepayment" tone="success" value={formatter.format(loan.totalPrepayment)} />
-            <MetricPill
-              label="Installments"
-              tone="default"
-              value={`${loan.paidInstallments}/${loan.schedule.length}`}
-            />
           </div>
 
           <div className="mt-5 h-3 overflow-hidden rounded-full bg-[#edf2f7]">
@@ -550,9 +657,9 @@ function LoanCard({
           ) : null}
         </div>
 
-        <div className="flex flex-col gap-2 lg:pt-1">
+        <div className="flex flex-col gap-2 sm:flex-row lg:flex-col lg:pt-1">
           <button
-            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-700 transition hover:border-[#111111] hover:text-neutral-950 lg:w-auto"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 text-sm font-semibold text-white transition hover:opacity-95 sm:w-auto"
             onClick={onToggleDetails}
             type="button"
           >
@@ -560,7 +667,7 @@ function LoanCard({
             {isExpanded ? "Hide detail" : "See detail info"}
           </button>
           <button
-            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-600 transition hover:border-[#111111] hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-600 transition hover:border-[#111111] hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             disabled={isDeleting}
             onClick={onDelete}
             type="button"
@@ -569,6 +676,7 @@ function LoanCard({
             {isDeleting ? "Deleting..." : "Delete"}
           </button>
         </div>
+      </div>
       </div>
 
       {isExpanded ? <ScheduleTable formatter={formatter} loan={loan} /> : null}
@@ -584,14 +692,56 @@ function ScheduleTable({
   loan: DebtLoanSummary;
 }) {
   return (
-    <div className="mt-6 overflow-hidden rounded-[1.5rem] border border-[#e6ebf2]">
-      <div className="border-b border-[#e6ebf2] bg-[#f8fbff] px-4 py-3">
+    <div className="border-t border-[#e6ebf2] bg-[#fbfcfe]">
+      <div className="flex flex-col gap-1 border-b border-[#e6ebf2] px-5 py-4 sm:px-6">
         <p className="text-sm font-semibold text-[#17304f]">EMI and prepayment schedule</p>
+        <p className="text-xs text-[#6d7d97]">
+          Paid rows are highlighted in green based on the EMI due date.
+        </p>
       </div>
-      <div className="max-h-[34rem] overflow-auto">
+
+      <div className="grid gap-3 p-4 sm:hidden">
+        {loan.schedule.map((row) => (
+          <div
+            className={`rounded-[1.25rem] border p-4 ${
+              row.isPaid
+                ? "border-[#d1fae5] bg-[#effcf5] text-[#166534]"
+                : "border-[#e6ebf2] bg-white text-[#233a5f]"
+            }`}
+            key={`${loan.id}-mobile-${row.installmentNumber}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">EMI #{row.installmentNumber}</p>
+                <p className="mt-1 text-xs opacity-75">{formatDate(row.dueDate)}</p>
+              </div>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  row.isPaid ? "bg-white text-[#166534]" : "bg-[#f4f7fb] text-[#566883]"
+                }`}
+              >
+                {row.isPaid ? "Paid" : "Pending"}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <ScheduleMiniValue label="EMI" value={formatter.format(row.emiAmount)} />
+              <ScheduleMiniValue label="Principal" value={formatter.format(row.principalPaid)} />
+              <ScheduleMiniValue label="Interest" value={formatter.format(row.interestPaid)} />
+              <ScheduleMiniValue label="Closing" value={formatter.format(row.closingBalance)} />
+            </div>
+            {row.prepaymentAmount > 0 ? (
+              <div className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-xs font-semibold">
+                Prepayment: {formatter.format(row.prepaymentAmount)}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden max-h-[34rem] overflow-auto sm:block">
         <table className="min-w-[68rem] text-sm">
           <thead>
-            <tr className="border-b border-[#e6edf7] bg-white text-left text-xs font-semibold uppercase tracking-[0.14em] text-[#7c8aa5]">
+            <tr className="sticky top-0 z-10 border-b border-[#e6edf7] bg-white text-left text-xs font-semibold uppercase tracking-[0.14em] text-[#7c8aa5] shadow-[0_1px_0_#e6edf7]">
               <th className="px-3 py-3">#</th>
               <th className="px-3 py-3">Due date</th>
               <th className="px-3 py-3">Opening</th>
@@ -607,7 +757,7 @@ function ScheduleTable({
           <tbody>
             {loan.schedule.map((row) => (
               <tr
-                className={`border-b border-[#eef3fa] ${
+                className={`border-b border-[#eef3fa] transition hover:bg-[#f8fbff] ${
                   row.isPaid ? "bg-[#effcf5] text-[#166534]" : "bg-white text-[#233a5f]"
                 }`}
                 key={`${loan.id}-${row.installmentNumber}`}
@@ -660,6 +810,17 @@ function MetricPill({
     <div className={`rounded-[1.4rem] border px-4 py-3 ${toneClass}`}>
       <p className="text-xs font-medium uppercase tracking-[0.08em] opacity-70">{label}</p>
       <p className="mt-2 break-words text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function ScheduleMiniValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] opacity-60">
+        {label}
+      </p>
+      <p className="mt-1 break-words font-semibold">{value}</p>
     </div>
   );
 }

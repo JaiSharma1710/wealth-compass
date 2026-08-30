@@ -161,14 +161,15 @@ export function DashboardView({
 
   return (
     <div className="h-full overflow-y-auto bg-[#f5f7fb]">
-      <section className="flex min-h-full flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <div className="rounded-[28px] border border-[#dce3ef] bg-white px-5 py-5 shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+      <section className="flex min-h-full flex-col gap-5 px-3 py-4 sm:gap-6 sm:px-6 lg:px-8">
+        <div className="overflow-hidden rounded-[2rem] border border-[#dce3ef] bg-white shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+          <div className="px-5 py-5 sm:px-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#7c8aa5]">
                 Overview
               </p>
-              <h1 className="text-3xl font-semibold tracking-tight text-[#10203a]">
+              <h1 className="text-2xl font-semibold tracking-tight text-[#10203a] sm:text-3xl">
                 Track your total wealth
               </h1>
               <p className="text-sm text-[#72829a]">
@@ -176,10 +177,10 @@ export function DashboardView({
                 {data.summary.lastUpdatedAt ? formatDateTime(data.summary.lastUpdatedAt) : "Not yet"}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <button
                 aria-label="Download detailed portfolio report"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#d6e0ef] bg-white px-4 text-sm font-semibold text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#d6e0ef] bg-white px-4 text-sm font-semibold text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:rounded-full"
                 disabled={isReportDownloading}
                 onClick={handleReportDownload}
                 title="Download XLS and PDF report"
@@ -193,7 +194,7 @@ export function DashboardView({
                 <span>Download</span>
               </button>
               <button
-                className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#d6e0ef] bg-white text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff]"
+                className="relative inline-flex h-11 w-full items-center justify-center rounded-2xl border border-[#d6e0ef] bg-white text-[#234067] transition hover:border-[#9cb6dc] hover:bg-[#f8fbff] sm:w-11 sm:rounded-full"
                 onClick={() => setIsInsightsOpen(true)}
                 type="button"
               >
@@ -206,26 +207,27 @@ export function DashboardView({
               </button>
             </div>
           </div>
+          </div>
 
           {data.summary.hasStaleData ? (
-            <div className="mt-4 rounded-2xl border border-[#f4d6a0] bg-[#fff8eb] px-4 py-3 text-sm text-[#8a6120]">
+            <div className="mx-5 mb-5 rounded-2xl border border-[#f4d6a0] bg-[#fff8eb] px-4 py-3 text-sm text-[#8a6120] sm:mx-6">
               Some values may be stale.
             </div>
           ) : null}
 
           {data.summary.todayMovementUnavailableAssetKeys.length > 0 &&
           data.summary.todayMovementAvailableAssetKeys.length > 0 ? (
-            <div className="mt-3 rounded-2xl border border-[#dde6f5] bg-[#f8fbff] px-4 py-3 text-sm text-[#5c6b85]">
+            <div className="mx-5 mb-5 rounded-2xl border border-[#dde6f5] bg-[#f8fbff] px-4 py-3 text-sm text-[#5c6b85] sm:mx-6">
               Today&apos;s movement includes only asset classes with reliable daily data right now.
             </div>
           ) : null}
         </div>
 
         {data.empty ? (
-          <section className="rounded-[28px] border border-[#dce4f0] bg-white p-8 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+          <section className="rounded-[2rem] border border-[#dce4f0] bg-white p-6 shadow-[0_18px_42px_rgba(15,23,42,0.05)] sm:p-8">
             <div className="mx-auto max-w-3xl text-center">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#7c8aa5]">Welcome to Wealth Compass</p>
-              <h2 className="mt-3 text-4xl font-semibold tracking-tight text-[#10203a]">Start by adding your first asset</h2>
+              <h2 className="mt-3 text-3xl font-semibold tracking-tight text-[#10203a] sm:text-4xl">Start by adding your first asset</h2>
               <p className="mt-3 text-sm text-[#5f6f89]">
                 Your dashboard will show net worth, allocation, recent activity, and long-term wealth movement after you add entries.
               </p>

@@ -167,9 +167,9 @@ export function GoalsView({ currencyCode, initialData }: GoalsViewProps) {
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
+    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-3 sm:p-6">
       <div className="mx-auto flex max-w-[96rem] flex-col gap-6">
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <TopStat
             icon={Target}
             label="Active Goals"
@@ -187,7 +187,7 @@ export function GoalsView({ currencyCode, initialData }: GoalsViewProps) {
           />
         </section>
 
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-sm">
+        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] sm:p-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-neutral-500">Goals</p>
@@ -196,7 +196,7 @@ export function GoalsView({ currencyCode, initialData }: GoalsViewProps) {
               </h2>
             </div>
             <button
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#111111] px-5 text-sm font-semibold text-white transition hover:opacity-95"
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#111111] px-5 text-sm font-semibold text-white transition hover:opacity-95 sm:w-auto"
               onClick={() => setIsCreateModalOpen(true)}
               type="button"
             >
@@ -218,7 +218,7 @@ export function GoalsView({ currencyCode, initialData }: GoalsViewProps) {
                 />
               ))
             ) : (
-              <div className="flex min-h-[24rem] items-center justify-center rounded-[2rem] border border-dashed border-[#d8deea] bg-white p-8 text-center shadow-sm">
+              <div className="flex min-h-[24rem] items-center justify-center rounded-[2rem] border border-dashed border-[#d8deea] bg-white p-6 text-center shadow-sm sm:p-8">
                 <div className="max-w-md">
                   <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-[#f4f7fb] text-neutral-700">
                     <Target className="size-6" />
@@ -242,7 +242,7 @@ export function GoalsView({ currencyCode, initialData }: GoalsViewProps) {
               onClick={() => setIsCreateModalOpen(false)}
               type="button"
             />
-            <section className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_32px_120px_rgba(15,23,42,0.28)]">
+            <section className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_32px_120px_rgba(15,23,42,0.28)] sm:p-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm font-medium text-neutral-500">Create New Goal</p>
@@ -384,7 +384,7 @@ export function GoalsView({ currencyCode, initialData }: GoalsViewProps) {
                   />
                 </Field>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row">
                   <button
                     className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-[#111111] text-sm font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={
@@ -425,7 +425,7 @@ function TopStat({
   value: string;
 }) {
   return (
-    <div className="rounded-[1.7rem] border border-[#e6ebf2] bg-white p-5 shadow-sm">
+    <div className="rounded-[1.7rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)]">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-neutral-500">{label}</p>
         <Icon className="size-4 text-neutral-500" />
@@ -469,7 +469,7 @@ function GoalCard({
       : "bg-[#fff4e8] text-[#c2410c]";
 
   return (
-    <article className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-sm sm:p-6">
+    <article className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_38px_rgba(15,23,42,0.07)] sm:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-3">
@@ -562,7 +562,7 @@ function GoalCard({
 
         <div className="flex items-center gap-2 lg:pt-1">
           <button
-            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-600 transition hover:border-[#111111] hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#e5e7eb] px-4 text-sm font-medium text-neutral-600 transition hover:border-[#111111] hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             disabled={isDeleting}
             onClick={onDelete}
             type="button"

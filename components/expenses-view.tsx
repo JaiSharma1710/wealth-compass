@@ -228,7 +228,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
     : 0;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
+    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-3 sm:p-6">
       <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
         {budgetRequired ? (
           <section className="rounded-[1.75rem] border border-[#f4d6a0] bg-[#fff8eb] p-4 shadow-sm">
@@ -258,11 +258,11 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
         ) : null}
 
         <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr_1fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] sm:p-6">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <p className="text-sm font-medium text-neutral-500">Current Cycle Budget</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
+                <h2 className="mt-3 break-words text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
                   {dashboardData.budget.amount != null
                     ? formatter.format(dashboardData.budget.amount)
                     : "Not set"}
@@ -278,9 +278,9 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2 sm:min-w-44">
                 <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={budgetRequired}
                   onClick={() => openEntryModal("expense")}
                   type="button"
@@ -289,7 +289,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
                   <span>Add Expense</span>
                 </button>
                 <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={budgetRequired}
                   onClick={() => openEntryModal("credit")}
                   type="button"
@@ -298,7 +298,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
                   <span>Add Credit</span>
                 </button>
                 <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50"
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50"
                   onClick={() => setActiveModal("budget")}
                   type="button"
                 >
@@ -329,7 +329,7 @@ export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
           />
         </div>
 
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
+        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_14px_34px_rgba(15,23,42,0.04)] sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h3 className="text-xl font-semibold tracking-tight text-neutral-950">

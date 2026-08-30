@@ -214,6 +214,40 @@
   color: #e5e7eb;
 }
 
+.wc-protected ::selection {
+  background: rgba(17, 17, 17, 0.14);
+}
+
+.wc-protected * {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.wc-protected ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.wc-protected ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: #cbd5e1;
+  background-clip: padding-box;
+}
+
+.wc-protected ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wc-protected button:focus-visible,
+.wc-protected a:focus-visible,
+.wc-protected input:focus-visible,
+.wc-protected select:focus-visible,
+.wc-protected textarea:focus-visible {
+  outline: 3px solid rgba(23, 61, 122, 0.2);
+  outline-offset: 2px;
+}
+
 .dark .wc-protected .bg-white,
 .dark .wc-protected [class*="bg-[#fafaf8]"],
 .dark .wc-protected [class*="bg-[#f8fbff]"],

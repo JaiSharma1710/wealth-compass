@@ -333,17 +333,17 @@ export function SettingsForm({ user }: SettingsFormProps) {
   const isSecurityBusy = isSecuritySubmitting || isSecurityPending;
 
   return (
-    <div className="h-full bg-[#f5f7fb] p-4 sm:p-6">
-      <div className="h-full rounded-[2rem] border border-[#e6ebf2] bg-white px-5 py-5 shadow-sm sm:px-7 sm:py-6">
-        <div className="border-b border-[#eef2f7]">
-          <div className="flex gap-8 overflow-x-auto">
+    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-3 sm:p-6">
+      <div className="min-h-full rounded-[2rem] border border-[#e6ebf2] bg-white px-4 py-4 shadow-[0_14px_34px_rgba(15,23,42,0.04)] sm:px-7 sm:py-6">
+        <div className="rounded-[1.5rem] border border-[#edf2f7] bg-[#f8fbff] p-1">
+          <div className="flex gap-1 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                className={`border-b-2 px-1 pb-3 text-base font-medium transition ${
+                className={`shrink-0 rounded-[1.15rem] px-4 py-2.5 text-sm font-semibold transition ${
                   activeTab === tab.id
-                    ? "border-[#111111] text-neutral-950"
-                    : "border-transparent text-neutral-400 hover:text-neutral-700"
+                    ? "bg-white text-neutral-950 shadow-sm"
+                    : "text-neutral-500 hover:text-neutral-800"
                 }`}
                 onClick={() => setActiveTab(tab.id)}
                 type="button"
@@ -356,7 +356,7 @@ export function SettingsForm({ user }: SettingsFormProps) {
 
         {activeTab === "security" ? (
           <form
-            className="flex h-[calc(100%-3.75rem)] flex-col"
+            className="flex min-h-[calc(100%-3.75rem)] flex-col"
             onSubmit={handleSecuritySubmit(onSecuritySubmit)}
           >
             <div className="flex-1 overflow-y-auto py-6">
@@ -417,7 +417,7 @@ export function SettingsForm({ user }: SettingsFormProps) {
             </div>
           </form>
         ) : (
-          <form className="flex h-[calc(100%-3.75rem)] flex-col" onSubmit={handleSubmit(onSubmit)}>
+          <form className="flex min-h-[calc(100%-3.75rem)] flex-col" onSubmit={handleSubmit(onSubmit)}>
             <div className="flex-1 overflow-y-auto py-6">
               {activeTab === "profile" ? (
                 <div className="max-h-full overflow-y-auto pr-1">
