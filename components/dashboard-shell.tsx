@@ -137,10 +137,10 @@ export function DashboardShell({ children, user }: { children: React.ReactNode; 
           ))}
         </nav>
 
-        <div className="border-t border-[#e6ebf2] p-4">
-          <div className="rounded-2xl bg-[#f8fafc] px-4 py-3">
-            <p className="truncate text-sm font-semibold text-neutral-950">{user.fullName}</p>
-            <p className="mt-0.5 truncate text-xs text-neutral-500">{user.email}</p>
+        <div className="border-t border-line p-4">
+          <div className="rounded-2xl bg-surface-2 px-4 py-3">
+            <p className="truncate text-sm font-semibold text-ink">{user.fullName}</p>
+            <p className="mt-0.5 truncate text-xs text-ink-3">{user.email}</p>
           </div>
         </div>
       </aside>
