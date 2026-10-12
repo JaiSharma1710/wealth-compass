@@ -2,6 +2,7 @@ import "server-only";
 
 import { Types } from "mongoose";
 
+import { syncSovereignGoldBondValuesForUser } from "@/lib/gold";
 import { syncGoldValuations } from "@/lib/gold-tracking";
 import {
   getLatestHoldingValueMap,
@@ -90,6 +91,19 @@ export type MarketSyncBatchSummary = {
   itemCounts: Record<MarketSyncItemSummary["status"], number>;
   items: MarketSyncItemSummary[];
   errorMessage: string;
+};
+
+export type MarketSyncCronFailure = {
+  userId: string;
+  message: string;
+};
+
+export type MarketSyncCronRunSummary = {
+  userCount: number;
+  batchCount: number;
+  failureCount: number;
+  batches: MarketSyncBatchSummary[];
+  failures: MarketSyncCronFailure[];
 };
 
 function toObjectId(value: string) {
@@ -327,6 +341,18 @@ export async function createMarketSyncBatch(input: {
   return normalizeBatch(batch.toObject() as MarketSyncBatchLean);
 }
 
+// SGB buys recorded with units are priced from NSE; per-holding tracker tickers
+// (Yahoo) run afterwards and win for the holdings they cover.
+async function syncAllGoldValuations(userId: string) {
+  const nse = await syncSovereignGoldBondValuesForUser(userId).catch(() => null);
+  const trackers = await syncGoldValuations(userId).catch(() => ({ updated: 0, failed: 0 }));
+
+  return {
+    updated: (nse?.updatedCount || 0) + trackers.updated,
+    failed: trackers.failed,
+  };
+}
+
 export type MarketSyncRunAssetType = MarketSyncRefreshAssetType | "gold";
 
 /** Full refresh for one user: market prices, gold valuations, then the daily net-worth snapshot. */
@@ -338,7 +364,7 @@ export async function runMarketSync(input: {
   const assetType = input.assetType || "mixed";
   const [gold, batch] = await Promise.all([
     assetType === "gold" || assetType === "mixed"
-      ? syncGoldValuations(input.userId).catch(() => ({ updated: 0, failed: 0 }))
+      ? syncAllGoldValuations(input.userId)
       : Promise.resolve({ updated: 0, failed: 0 }),
     assetType === "gold"
       ? Promise.resolve(null)
@@ -368,6 +394,7 @@ export async function runCronMarketSync() {
         goldUpdated: gold.updated,
       });
     } catch (error) {
+      console.error("Market data cron failed for user.", { userId, error });
       results.push({
         userId,
         error: error instanceof Error ? error.message : "Sync failed.",

@@ -7,6 +7,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Coins,
   Compass,
+  Landmark,
   LayoutDashboard,
   LineChart,
   LogOut,
@@ -52,7 +53,8 @@ const navGroups: Array<{ title: string | null; items: NavItem[] }> = [
     items: [
       { href: "/expenses", icon: ReceiptText, label: "Expenses", short: "Spends" },
       { href: "/cash-and-reserves", icon: Wallet, label: "Cash & Savings" },
-      { href: "/accounts", icon: Scale, label: "Other Assets & Loans" },
+      { href: "/debt", icon: Landmark, label: "Loans & EMIs" },
+      { href: "/accounts", icon: Scale, label: "Other Assets" },
     ],
   },
   {
@@ -134,6 +136,13 @@ export function DashboardShell({ children, user }: { children: React.ReactNode; 
             </div>
           ))}
         </nav>
+
+        <div className="border-t border-[#e6ebf2] p-4">
+          <div className="rounded-2xl bg-[#f8fafc] px-4 py-3">
+            <p className="truncate text-sm font-semibold text-neutral-950">{user.fullName}</p>
+            <p className="mt-0.5 truncate text-xs text-neutral-500">{user.email}</p>
+          </div>
+        </div>
       </aside>
 
       <div className="flex h-svh flex-col md:pl-60">

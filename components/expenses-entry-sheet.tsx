@@ -65,6 +65,7 @@ function EntryForm({
   const [category, setCategory] = useState(entry?.category ?? "");
   const [touched, setTouched] = useState(Boolean(entry));
   const [occurredAt, setOccurredAt] = useState(entry ? formatIstDateTimeForInput(new Date(entry.occurredAt)) : now);
+  const [spreadDays, setSpreadDays] = useState(entry?.spreadDays ? String(entry.spreadDays) : "1");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -88,7 +89,14 @@ function EntryForm({
       const response = await fetch(entry ? `/api/expenses/${entry.id}` : "/api/expenses", {
         method: entry ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entryType, amount: parsedAmount, note, category: activeCategory, occurredAt }),
+        body: JSON.stringify({
+          entryType,
+          amount: parsedAmount,
+          note,
+          category: activeCategory,
+          occurredAt,
+          spreadDays: entryType === "expense" ? Math.max(1, Math.round(Number(spreadDays) || 1)) : 1,
+        }),
       });
       const result = (await response.json().catch(() => ({}))) as {
         message?: string;
@@ -205,6 +213,18 @@ function EntryForm({
         </div>
       </div>
 
+      {entryType === "expense" ? (
+        <Field
+          label="Days covered"
+          hint={
+            Number(spreadDays) > 1 && Number(amount) > 0
+              ? `Counted as ₹${(Number(amount) / Number(spreadDays)).toFixed(0)}/day from this date — e.g. a monthly pass or bill.`
+              : "Spread a bulk purchase (monthly pass, rent, groceries for the week) across days."
+          }
+        >
+          <Input type="number" min={1} max={366} inputMode="numeric" value={spreadDays} onChange={(event) => setSpreadDays(event.target.value)} />
+        </Field>
+      ) : null}
       <Field label="Date & time (IST)">
         <Input type="datetime-local" value={occurredAt} max={now} onChange={(event) => setOccurredAt(event.target.value)} />
       </Field>

@@ -10,6 +10,7 @@ import {
   calculateAllocationPercent,
   calculateGainLossPercent,
   filterHistoryByRange,
+  getAvailableHistoryRanges,
   roundCurrency,
   roundPercent,
   sortRecentActivity,
@@ -21,11 +22,13 @@ import {
   upsertDailyValues,
   type DailyValueAssetType,
 } from "@/lib/daily-values";
+import { DASHBOARD_HISTORY_RANGES } from "@/lib/dashboard.types";
 import type {
   DashboardAssetClassKey,
   DashboardAssetClassSummary,
   DashboardCashFlowSummary,
   DashboardData,
+  DashboardDebtSummary,
   DashboardGoalsSummary,
   DashboardHistoryPoint,
   DashboardHistoryRange,
@@ -34,6 +37,8 @@ import type {
   DashboardSummary,
 } from "@/lib/dashboard.types";
 import { getExpenseDashboard } from "@/lib/expenses";
+import { getDebtPageData } from "@/lib/debt";
+import type { DebtPageData } from "@/lib/debt.types";
 import { getGoalsPageData } from "@/lib/goals";
 import { getGoldDashboard } from "@/lib/gold";
 import { getMarketSyncStatus } from "@/lib/market-sync-status";
@@ -41,7 +46,7 @@ import { getMutualFundDashboard } from "@/lib/mutual-funds";
 import { getStockDashboard } from "@/lib/stocks";
 import { calculateXirr } from "@/lib/xirr";
 
-const DEFAULT_HISTORY_RANGE: DashboardHistoryRange = "1M";
+const DEFAULT_HISTORY_RANGE: DashboardHistoryRange = "ALL";
 
 type StockDashboard = Awaited<ReturnType<typeof getStockDashboard>>;
 type MutualFundDashboard = Awaited<ReturnType<typeof getMutualFundDashboard>>;
@@ -51,6 +56,7 @@ type AccountsDashboard = Awaited<ReturnType<typeof getAccountsDashboard>>;
 type ExpenseDashboard = Awaited<ReturnType<typeof getExpenseDashboard>>;
 
 type AssetInputs = {
+  debt: DebtPageData;
   stocks: StockDashboard;
   mutualFunds: MutualFundDashboard;
   gold: GoldDashboard;
@@ -108,6 +114,24 @@ function buildGoalsSummary(goalsPageData: Awaited<ReturnType<typeof getGoalsPage
       targetDate: goal.targetDate,
     })),
     empty: goalsPageData.goals.length === 0,
+  };
+}
+
+/** Outstanding principal across loans on a given date (yyyy-mm-dd), from their schedules. */
+function getLoanOutstandingOn(debt: DebtPageData, dateKey: string) {
+  return roundCurrency(
+    debt.loans.reduce((sum, loan) => {
+      if (dateKey < loan.startDate.slice(0, 10)) return sum;
+      const lastPaid = [...loan.schedule].reverse().find((row) => row.dueDate.slice(0, 10) <= dateKey);
+      return sum + (lastPaid ? lastPaid.closingBalance : loan.principalAmount);
+    }, 0)
+  );
+}
+
+function buildDebtSummary(debtPageData: DebtPageData): DashboardDebtSummary {
+  return {
+    ...debtPageData.overview,
+    empty: debtPageData.loans.length === 0,
   };
 }
 
@@ -301,7 +325,10 @@ function buildSummary(
   const totalAssets = roundCurrency(
     assetClasses.reduce((sum, assetClass) => sum + assetClass.currentValue, 0)
   );
-  const totalLiabilities = input.accounts.totalLiabilities;
+  // EMI loans (Debt page) plus other liabilities such as credit cards (Accounts page).
+  const totalLiabilities = roundCurrency(
+    input.accounts.totalLiabilities + input.debt.overview.totalOutstandingPrincipal
+  );
   const totalInvested = roundCurrency(
     assetClasses.reduce((sum, assetClass) => sum + assetClass.investedAmount, 0)
   );
@@ -421,15 +448,16 @@ function buildCashFlow(expenses: ExpenseDashboard | null): DashboardCashFlowSumm
 }
 
 async function loadAssetInputs(userId: string): Promise<AssetInputs> {
-  const [stocks, mutualFunds, gold, cash, accounts] = await Promise.all([
+  const [stocks, mutualFunds, gold, cash, accounts, debt] = await Promise.all([
     getStockDashboard(userId),
     getMutualFundDashboard(userId),
     getGoldDashboard(userId),
     getCashReserveDashboard(userId),
     getAccountsDashboard(userId),
+    getDebtPageData(userId),
   ]);
 
-  return { stocks, mutualFunds, gold, cash, accounts };
+  return { stocks, mutualFunds, gold, cash, accounts, debt };
 }
 
 export async function getPortfolioHistory(
@@ -521,10 +549,26 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
       goldValue: inputs.gold.totalCurrentValue,
       cashValue: inputs.cash.totalBalance,
       otherAssetsValue: inputs.accounts.totalAssets,
-      liabilitiesValue: inputs.accounts.totalLiabilities,
+      liabilitiesValue: summary.totalLiabilities,
     },
   ];
+  // Snapshots saved before loans were tracked have no liability figure; rebuild it from
+  // each loan's EMI schedule so history doesn't show a fake cliff on the day debt appears.
+  for (const point of liveHistory) {
+    if (point.date === todayKey || point.liabilitiesValue > 0) continue;
+    const loanBalance = getLoanOutstandingOn(inputs.debt, point.date);
+    if (loanBalance <= 0) continue;
+    point.liabilitiesValue = loanBalance;
+    point.totalValue = roundCurrency(point.totalValue - loanBalance);
+  }
+
   const periodChanges = buildPeriodChanges(liveHistory, todayKey);
+  const historyAvailableRanges = getAvailableHistoryRanges(liveHistory, {
+    ranges: [...DASHBOARD_HISTORY_RANGES],
+  });
+  const historyRange = historyAvailableRanges.includes(DEFAULT_HISTORY_RANGE)
+    ? DEFAULT_HISTORY_RANGE
+    : historyAvailableRanges[0] || "ALL";
   const allocation = attachAllocationPercent(
     assetClasses.map((assetClass) => ({
       key: assetClass.key,
@@ -543,15 +587,32 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
     movers: buildMovers(inputs),
     cashFlow,
     liabilities: {
-      total: inputs.accounts.totalLiabilities,
-      monthlyPayments: inputs.accounts.totalMonthlyPayments,
-      count: inputs.accounts.liabilities.length,
-      items: inputs.accounts.liabilities.slice(0, 4).map((account) => ({
-        id: account.id,
-        name: account.name,
-        categoryLabel: account.categoryLabel,
-        outstanding: account.currentValue,
-      })),
+      total: summary.totalLiabilities,
+      monthlyPayments: roundCurrency(
+        inputs.accounts.totalMonthlyPayments +
+          inputs.debt.loans
+            .filter((loan) => loan.remainingInstallments > 0)
+            .reduce((sum, loan) => sum + loan.emiAmount, 0)
+      ),
+      count:
+        inputs.accounts.liabilities.length +
+        inputs.debt.loans.filter((loan) => loan.remainingPrincipal > 0).length,
+      items: [
+        ...inputs.debt.loans
+          .filter((loan) => loan.remainingPrincipal > 0)
+          .map((loan) => ({
+            id: loan.id,
+            name: loan.name,
+            categoryLabel: "Loan · EMI",
+            outstanding: loan.remainingPrincipal,
+          })),
+        ...inputs.accounts.liabilities.map((account) => ({
+          id: account.id,
+          name: account.name,
+          categoryLabel: account.categoryLabel,
+          outstanding: account.currentValue,
+        })),
+      ].slice(0, 4),
     },
     recentActivity: buildActivity({ ...inputs, expenses }),
     goalsSummary,
@@ -567,8 +628,10 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
       syncFailedCount: sync.syncedToday ? sync.failedCount : 0,
     }),
     history: liveHistory,
-    historyRange: DEFAULT_HISTORY_RANGE,
+    historyRange,
+    historyAvailableRanges,
     sync,
+    debtSummary: buildDebtSummary(inputs.debt),
     empty,
   };
 }

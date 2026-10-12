@@ -7,6 +7,7 @@ import {
   ArrowRight,
   ArrowUpRight,
   CheckCircle2,
+  Download,
   Info,
   Lightbulb,
   ReceiptText,
@@ -99,7 +100,10 @@ export function DashboardView({ data, currencyCode }: { data: DashboardData; cur
         <Card className="lg:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-ink-3">Net worth</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-ink-3">Net worth</p>
+                <ReportDownload />
+              </div>
               <p className="tabular mt-1 text-[2.1rem] leading-tight font-semibold tracking-tight text-ink sm:text-[2.6rem]">
                 {formatMoney(summary.netWorth, { currency, decimals: 0 })}
               </p>
@@ -165,7 +169,9 @@ export function DashboardView({ data, currencyCode }: { data: DashboardData; cur
               size="xs"
               value={range}
               onChange={setRange}
-              options={DASHBOARD_HISTORY_RANGES.map((value) => ({ value, label: value }))}
+              options={(data.historyAvailableRanges?.length ? data.historyAvailableRanges : DASHBOARD_HISTORY_RANGES).map(
+                (value) => ({ value, label: value })
+              )}
             />
           </div>
           <div className="mt-3">
@@ -530,5 +536,21 @@ function InsightRow({ insight }: { insight: DashboardInsight }) {
         <div className="py-1.5">{body}</div>
       )}
     </li>
+  );
+}
+
+/** Portfolio report download (Excel / PDF) served by /api/portfolio-report. */
+function ReportDownload() {
+  return (
+    <span className="inline-flex items-center gap-1 text-xs">
+      <Download className="size-3.5 text-ink-3" aria-hidden />
+      <a href="/api/portfolio-report?format=xls" download className="font-medium text-brand hover:underline">
+        Excel
+      </a>
+      <span className="text-ink-3">·</span>
+      <a href="/api/portfolio-report?format=pdf" download className="font-medium text-brand hover:underline">
+        PDF
+      </a>
+    </span>
   );
 }

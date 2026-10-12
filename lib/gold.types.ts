@@ -24,6 +24,7 @@ export type GoldHoldingSummary = {
   investmentOption: GoldInvestmentOption;
   investmentOptionLabel: string;
   schemeName: string;
+  units: number | null;
   investedAmount: number;
   currentValue: number;
   profitLossAmount: number;
@@ -62,6 +63,7 @@ export type GoldActivitySummary = {
   investmentOption: GoldInvestmentOption;
   investmentOptionLabel: string;
   schemeName: string;
+  units: number | null;
   investedAmount: number | null;
   currentValue: number | null;
   sellAmount: number | null;

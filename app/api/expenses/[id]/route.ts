@@ -11,6 +11,7 @@ type ExpenseUpdateBody = {
   amount?: number | string;
   note?: string;
   category?: string;
+  spreadDays?: number | string;
   occurredAt?: string;
 };
 
@@ -45,6 +46,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       amount,
       note: body?.note,
       category: body?.category,
+      spreadDays: Number(body?.spreadDays || 1),
       occurredAt: String(body?.occurredAt || ""),
     });
 

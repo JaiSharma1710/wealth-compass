@@ -138,7 +138,21 @@ export function StockBuySheet({
               typeof option === "string" ? option : `${displaySymbol(option.symbol)} · ${option.companyName}`
             }
             minLength={1}
-            onChange={(value) => setSelected(value as StockSearchResult[])}
+            onChange={(value) => {
+              const next = value as StockSearchResult[];
+              setSelected(next);
+
+              // Pre-fill the latest market price; the user can still overwrite it.
+              if (next[0] && !price) {
+                fetch(`/api/stocks/quotes?symbol=${encodeURIComponent(next[0].symbol)}`, { cache: "no-store" })
+                  .then((response) => (response.ok ? response.json() : null))
+                  .then((result) => {
+                    const latest = result?.quote?.regularMarketPrice;
+                    if (typeof latest === "number") setPrice((current) => current || String(latest));
+                  })
+                  .catch(() => null);
+              }
+            }}
             onSearch={search}
             options={options}
             placeholder="Search company or symbol"

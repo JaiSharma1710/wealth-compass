@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
 import { Button } from "@/components/ui/kit";
@@ -21,6 +21,7 @@ type Values = {
   investedAmount: string;
   currentValue: string;
   sellAmount: string;
+  units: string;
 };
 
 function today() {
@@ -79,8 +80,26 @@ export function GoldTransactionSheet({
       investedAmount: "",
       currentValue: "",
       sellAmount: "",
+      units: "",
     });
   }, [kind, initialHoldingId, holdings, reset]);
+
+  const watchedOption = useWatch({ control, name: "investmentOption" });
+  const isSgb = kind === "buy" && watchedOption === "sovereign_gold_bond";
+  const [bonds, setBonds] = useState<Array<{ symbol: string; lastPrice: number }>>([]);
+
+  // NSE-listed SGB series with live prices, for picking the series code.
+  useEffect(() => {
+    if (!isSgb || bonds.length) return;
+    fetch("/api/gold/sgb", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((result) => setBonds(result?.bonds || []))
+      .catch(() => null);
+  }, [isSgb, bonds.length]);
+
+  const watchedScheme = useWatch({ control, name: "schemeName" });
+  const watchedUnits = useWatch({ control, name: "units" });
+  const bondPrice = bonds.find((bond) => bond.symbol === String(watchedScheme || "").trim().toUpperCase())?.lastPrice;
 
   const watchedHoldingId = useWatch({ control, name: "holdingId" });
   const selectedHolding = holdings.find((holding) => holding.id === watchedHoldingId);
@@ -96,6 +115,7 @@ export function GoldTransactionSheet({
         schemeName: values.schemeName,
         investedAmount: Number(values.investedAmount),
         currentValue: Number(values.currentValue),
+        ...(values.investmentOption === "sovereign_gold_bond" ? { units: Number(values.units) } : {}),
         date: values.date,
       });
       return;
@@ -189,12 +209,43 @@ export function GoldTransactionSheet({
             >
               <Input
                 placeholder="SGBMAY29I"
+                list={isSgb ? "nse-sgb-series" : undefined}
                 {...register("schemeName", {
                   required: "Fund or scheme name is required.",
                   maxLength: { value: 220, message: "Name must be 220 characters or fewer." },
                 })}
               />
+              {isSgb ? (
+                <datalist id="nse-sgb-series">
+                  {bonds.map((bond) => (
+                    <option key={bond.symbol} value={bond.symbol}>
+                      {formatMoney(bond.lastPrice, { currency })}
+                    </option>
+                  ))}
+                </datalist>
+              ) : null}
             </Field>
+            {isSgb ? (
+              <Field
+                label="Units (grams)"
+                error={errors.units?.message}
+                hint={
+                  bondPrice
+                    ? `NSE price ${formatMoney(bondPrice, { currency })} per unit — value updates automatically every morning.`
+                    : "Needed so the bond is priced automatically from NSE every morning."
+                }
+              >
+                <Input
+                  type="number"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder="10"
+                  {...register("units", {
+                    validate: (value) => (isSgb && !(Number(value) > 0) ? "Units must be greater than zero." : true),
+                  })}
+                />
+              </Field>
+            ) : null}
             <FieldGrid>
               <Field label="Invested amount" error={errors.investedAmount?.message}>
                 <Input
@@ -213,7 +264,7 @@ export function GoldTransactionSheet({
                   type="number"
                   step="0.01"
                   inputMode="decimal"
-                  placeholder="52000"
+                  placeholder={bondPrice && Number(watchedUnits) > 0 ? String(Math.round(bondPrice * Number(watchedUnits))) : "52000"}
                   {...register("currentValue", {
                     required: "Current value is required.",
                     validate: positive("Current value"),

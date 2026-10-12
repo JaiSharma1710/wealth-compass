@@ -22,6 +22,11 @@ const goldTransactionSchema = new Schema(
       trim: true,
       maxlength: 220,
     },
+    units: {
+      type: Number,
+      default: null,
+      min: 0.000001,
+    },
     transactionType: {
       type: String,
       enum: ["buy", "sell", "valuation"],
@@ -75,6 +80,7 @@ function hasCurrentGoldTransactionSchema(existingModel: Model<GoldTransactionDoc
   return [
     "investmentOption",
     "schemeName",
+    "units",
     "investedAmount",
     "currentValue",
     "sellAmount",

@@ -145,6 +145,22 @@ export type DashboardSyncStatus = {
   failedItems: Array<{ label: string; message: string }>;
 };
 
+export type DashboardDebtSummary = {
+  totalLoans: number;
+  activeLoans: number;
+  closedLoans: number;
+  totalOriginalPrincipal: number;
+  totalOutstandingPrincipal: number;
+  totalPaidAmount: number;
+  totalPaidPrincipal: number;
+  totalPaidInterest: number;
+  totalRemainingAmount: number;
+  totalInterestPayable: number;
+  nextEmiDate: string | null;
+  nextEmiAmount: number;
+  empty: boolean;
+};
+
 export type DashboardInsight = {
   id: string;
   tone: "neutral" | "positive" | "warning" | "negative";
@@ -163,15 +179,20 @@ export type DashboardData = {
   liabilities: DashboardLiabilitiesSummary;
   recentActivity: DashboardRecentActivityItem[];
   goalsSummary: DashboardGoalsSummary;
+  /** Loans & EMIs (Debt page). */
+  debtSummary: DashboardDebtSummary;
   insights: DashboardInsight[];
   /** Full history; the client filters by range. */
   history: DashboardHistoryPoint[];
   historyRange: DashboardHistoryRange;
   sync: DashboardSyncStatus;
+  /** Ranges with enough history to be meaningful. */
+  historyAvailableRanges: DashboardHistoryRange[];
   empty: boolean;
 };
 
 export type DashboardHistoryResponse = {
   range: DashboardHistoryRange;
   history: DashboardHistoryPoint[];
+  historyAvailableRanges: DashboardHistoryRange[];
 };

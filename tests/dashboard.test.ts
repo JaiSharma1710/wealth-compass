@@ -24,6 +24,10 @@ vi.mock("@/lib/goals", () => ({
   getGoalsPageData: vi.fn(),
 }));
 
+vi.mock("@/lib/debt", () => ({
+  getDebtPageData: vi.fn(),
+}));
+
 vi.mock("@/lib/accounts", () => ({
   getAccountsDashboard: vi.fn().mockResolvedValue({
     assets: [],
@@ -58,6 +62,7 @@ vi.mock("@/lib/daily-values", () => ({
 
 import { getDashboard, getPortfolioHistory, saveDailyPortfolioValuesForUser } from "@/lib/dashboard";
 import { getCashReserveDashboard } from "@/lib/cash-reserves";
+import { getDebtPageData } from "@/lib/debt";
 import { getPortfolioHistoryFromDailyValues, upsertDailyValues } from "@/lib/daily-values";
 import { getGoldDashboard } from "@/lib/gold";
 import { getGoalsPageData } from "@/lib/goals";
@@ -204,6 +209,7 @@ function createGoldDashboard() {
         investmentOption: "digital_gold" as const,
         investmentOptionLabel: "Digital Gold",
         schemeName: "24K Gold",
+        units: null,
         investedAmount: 40,
         currentValue: 50,
         profitLossAmount: 10,
@@ -220,6 +226,7 @@ function createGoldDashboard() {
           investmentOption: "digital_gold" as const,
           investmentOptionLabel: "Digital Gold",
           schemeName: "24K Gold",
+          units: null,
           investedAmount: 40,
           currentValue: 50,
           sellAmount: null,
@@ -306,6 +313,26 @@ function createGoalsPageData() {
   };
 }
 
+function createDebtPageData() {
+  return {
+    overview: {
+      totalLoans: 1,
+      activeLoans: 1,
+      closedLoans: 0,
+      totalOriginalPrincipal: 1000,
+      totalOutstandingPrincipal: 700,
+      totalPaidAmount: 360,
+      totalPaidPrincipal: 300,
+      totalPaidInterest: 60,
+      totalRemainingAmount: 760,
+      totalInterestPayable: 120,
+      nextEmiDate: "2026-06-05T00:00:00.000Z",
+      nextEmiAmount: 120,
+    },
+    loans: [],
+  };
+}
+
 describe("dashboard domain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -317,6 +344,7 @@ describe("dashboard domain", () => {
     vi.mocked(getGoldDashboard).mockResolvedValue(createGoldDashboard());
     vi.mocked(getCashReserveDashboard).mockResolvedValue(createCashDashboard());
     vi.mocked(getGoalsPageData).mockResolvedValue(createGoalsPageData());
+    vi.mocked(getDebtPageData).mockResolvedValue(createDebtPageData());
     vi.mocked(upsertDailyValues).mockResolvedValue(undefined);
     vi.mocked(getPortfolioHistoryFromDailyValues).mockResolvedValue([
       {
@@ -340,6 +368,7 @@ describe("dashboard domain", () => {
     expect(dashboard.summary.totalGainLoss).toBe(80);
     expect(dashboard.summary.totalGainLossPercent).toBe(23.53);
     expect(dashboard.goalsSummary.totalSavedAmount).toBe(300);
+    expect(dashboard.debtSummary.totalOutstandingPrincipal).toBe(700);
     expect(dashboard.summary.totalCurrentWorth).not.toBe(720);
   });
 
@@ -454,9 +483,10 @@ describe("dashboard domain", () => {
     expect(upsertDailyValues).toHaveBeenCalledTimes(1);
     const [inputs] = vi.mocked(upsertDailyValues).mock.calls[0];
     expect(inputs).toHaveLength(7);
-    expect(inputs.find((input) => input.scope === "portfolio")?.currentValue).toBe(420);
+    // Assets 420 minus the 700 outstanding on the EMI loan.
+    expect(inputs.find((input) => input.scope === "portfolio")?.currentValue).toBe(-280);
     expect(inputs.find((input) => input.assetType === "stock")?.currentValue).toBe(100);
-    expect(inputs.find((input) => input.assetType === "liability")?.currentValue).toBe(0);
+    expect(inputs.find((input) => input.assetType === "liability")?.currentValue).toBe(700);
   });
 
   it("filters history by range", async () => {
@@ -487,6 +517,37 @@ describe("dashboard domain", () => {
 
     expect(history).toHaveLength(2);
     expect(history.map((entry) => entry.date)).toEqual(["2026-05-25", "2026-05-30"]);
+  });
+
+  it("exposes only meaningful wealth movement ranges for the saved history span", async () => {
+    vi.mocked(getPortfolioHistoryFromDailyValues).mockResolvedValue([
+      {
+        date: "2026-02-20",
+        totalValue: 380,
+        stocksValue: 90,
+        mutualFundsValue: 180,
+        goldValue: 45,
+        cashValue: 65,
+        otherAssetsValue: 0,
+        liabilitiesValue: 0,
+      },
+      {
+        date: "2026-05-30",
+        totalValue: 420,
+        stocksValue: 100,
+        mutualFundsValue: 200,
+        goldValue: 50,
+        cashValue: 70,
+        otherAssetsValue: 0,
+        liabilitiesValue: 0,
+      },
+    ]);
+
+    const dashboard = await getDashboard(mockUser);
+
+    expect(dashboard.historyAvailableRanges).toEqual(["1W", "1M", "3M", "ALL"]);
+    expect(dashboard.historyRange).toBe("ALL");
+    expect(dashboard.history.map((entry) => entry.date)).toEqual(["2026-02-20", "2026-05-30"]);
   });
 
   it("keeps history queries isolated by userId", async () => {

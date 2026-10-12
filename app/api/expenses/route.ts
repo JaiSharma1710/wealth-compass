@@ -12,6 +12,7 @@ type ExpenseCreateBody = {
   note?: string;
   category?: string;
   occurredAt?: string;
+  spreadDays?: number | string;
 };
 
 function getTokenFromRequest(request: Request) {
@@ -60,6 +61,10 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as ExpenseCreateBody | null;
   const amount =
     typeof body?.amount === "number" ? body.amount : Number(String(body?.amount || "").trim());
+  const spreadDays =
+    typeof body?.spreadDays === "number"
+      ? body.spreadDays
+      : Number(String(body?.spreadDays || 1).trim());
 
   try {
     const dashboard = await saveExpenseEntry(session.sub, {
@@ -68,6 +73,7 @@ export async function POST(request: Request) {
       note: body?.note,
       category: body?.category,
       occurredAt: String(body?.occurredAt || ""),
+      spreadDays,
     });
 
     return NextResponse.json(
