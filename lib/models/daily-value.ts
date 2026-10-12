@@ -6,6 +6,8 @@ export const DAILY_VALUE_ASSET_TYPES = [
   "mutual_fund",
   "gold",
   "cash",
+  "other",
+  "liability",
   "portfolio",
 ] as const;
 export const DAILY_VALUE_SOURCES = ["cron", "manual", "migration", "system"] as const;

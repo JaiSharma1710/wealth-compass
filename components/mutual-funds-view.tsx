@@ -1,1526 +1,522 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import type { PieLabelRenderProps } from "recharts";
-import {
-  ArrowDownRight,
-  ArrowUpRight,
-  Landmark,
-  Minus,
-  PieChart as PieChartIcon,
-  Plus,
-  Wallet,
-  RefreshCw,
-} from "lucide-react";
-import { AsyncTypeahead, Highlighter } from "react-bootstrap-typeahead";
-import { useForm } from "react-hook-form";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { Landmark, Plus, RefreshCw, Trash2, TrendingUp, Trophy, Layers, CalendarClock } from "lucide-react";
 import toast from "react-hot-toast";
 
+import { ConfirmDeleteSheet, MutualFundTradeSheet } from "@/components/mutual-funds-sheets";
+import { estimateFundCategory, shortSchemeName } from "@/components/mutual-funds-categories";
+import { AllocationBar, ASSET_COLORS, RankedBars, TrendChart } from "@/components/ui/charts";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { Badge, Button, Card, CardHeader, Delta, EmptyState, Page, StatTile } from "@/components/ui/kit";
+import { Field, Select } from "@/components/ui/sheet";
 import {
-  MarketSyncBatchReview,
-  type MarketSyncBatchSummary,
-} from "@/components/market-sync-batch-review";
-import { MutualFundsHoldingsTable } from "@/components/mutual-funds-holdings-table";
+  formatCompactMoney,
+  formatDate,
+  formatMoney,
+  formatNumber,
+  formatPercent,
+  formatRelativeTime,
+  toneOf,
+} from "@/lib/format";
 import type {
   MutualFundDashboardData,
-  MutualFundOptionSummary,
-  MutualFundTransactionType,
+  MutualFundHoldingSummary,
+  MutualFundNavHistory,
+  MutualFundTransactionSummary,
 } from "@/lib/mutual-funds.types";
+import { cn } from "@/lib/utils";
 
-type MutualFundsViewProps = {
-  currencyCode: string;
-  initialData: MutualFundDashboardData;
-};
-
-type MfSchemeOption = MutualFundOptionSummary;
-
-type BuyMfValues = {
-  previousSchemeCode: string;
-  units: string;
-  nav: string;
-  date: string;
-};
-
-type SellMfValues = {
-  schemeCode: string;
-  units: string;
-  nav: string;
-  date: string;
-};
-
-const DISTRIBUTION_COLORS = [
-  "#3b82f6",
-  "#10b981",
-  "#f59e0b",
-  "#f97316",
-  "#8b5cf6",
-  "#ef4444",
-  "#14b8a6",
-  "#64748b",
+const FUND_COLORS = [
+  "var(--wc-asset-funds)",
+  "var(--wc-asset-stocks)",
+  "var(--wc-asset-gold)",
+  "var(--wc-asset-cash)",
+  "var(--wc-asset-other)",
+  "var(--wc-ink-3)",
 ];
 
-const RADIAN = Math.PI / 180;
-const TRANSACTIONS_PAGE_SIZE = 5;
+export function MutualFundsView({ data: initialData, currencyCode }: { data: MutualFundDashboardData; currencyCode: string }) {
+  const router = useRouter();
+  const currency = currencyCode;
+  const [data, setData] = useState(initialData);
+  const [sheet, setSheet] = useState<"buy" | "sell" | null>(null);
+  const [presetScheme, setPresetScheme] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [toDelete, setToDelete] = useState<MutualFundTransactionSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [historyScheme, setHistoryScheme] = useState<number | null>(initialData.holdings[0]?.schemeCode ?? null);
+  const [history, setHistory] = useState<MutualFundNavHistory | null>(null);
+  const [historyError, setHistoryError] = useState<number | null>(null);
 
-function renderDistributionLabel({
-  cx,
-  cy,
-  midAngle,
-  innerRadius,
-  outerRadius,
-  percent,
-}: PieLabelRenderProps) {
-  if (!percent || percent < 0.035 || typeof midAngle !== "number") {
-    return null;
+  const [seenData, setSeenData] = useState(initialData);
+  if (seenData !== initialData) {
+    setSeenData(initialData);
+    setData(initialData);
   }
 
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.58;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
-  const label = `${(percent * 100).toFixed(percent >= 0.1 ? 0 : 1)}%`;
+  const { holdings } = data;
+  const hasData = holdings.length > 0 || data.recentTransactions.length > 0;
 
-  return (
-    <text
-      dominantBaseline="central"
-      fill="#ffffff"
-      fontSize={14}
-      fontWeight={700}
-      textAnchor="middle"
-      x={x}
-      y={y}
-    >
-      {label}
-    </text>
-  );
-}
-
-function formatSignedCurrency(value: number, formatter: Intl.NumberFormat) {
-  return value >= 0 ? formatter.format(value) : `(${formatter.format(Math.abs(value))})`;
-}
-
-function formatSignedPercent(value: number) {
-  return value >= 0 ? `${value.toFixed(1)}%` : `(${Math.abs(value).toFixed(1)}%)`;
-}
-
-export function MutualFundsView({
-  currencyCode,
-  initialData,
-}: MutualFundsViewProps) {
-  const [data, setData] = useState(initialData);
-  const [activeModal, setActiveModal] = useState<"buy" | "sell" | null>(null);
-  const [marketSyncBatch, setMarketSyncBatch] = useState<MarketSyncBatchSummary | null>(null);
-  const [isPending, startTransition] = useTransition();
-  const [fundSearchOptions, setFundSearchOptions] = useState<MfSchemeOption[]>([]);
-  const [isSearchingFunds, setIsSearchingFunds] = useState(false);
-  const [selectedBuyFund, setSelectedBuyFund] = useState<MfSchemeOption[]>([]);
-  const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
-  const firstHolding = data.holdings[0];
-  const [selectedBuySchemeCode, setSelectedBuySchemeCode] = useState("");
-  const [selectedSellSchemeCode, setSelectedSellSchemeCode] = useState(
-    firstHolding ? String(firstHolding.schemeCode) : ""
-  );
-  const [isDistributionModalOpen, setIsDistributionModalOpen] = useState(false);
-  const [latestModalNav, setLatestModalNav] = useState<number | null>(null);
-  const [isLatestModalNavLoading, setIsLatestModalNavLoading] = useState(false);
-  const [latestModalNavError, setLatestModalNavError] = useState<string | null>(null);
-  const monthTrendUp = data.monthOverMonthChangeAmount >= 0;
-  const overallProfitUp = data.totalProfitLossAmount >= 0;
-  const realizedProfitUp = data.totalRealizedProfitAmount >= 0;
-  const chartData = data.months;
-  const distributionData = useMemo(
-    () =>
-      data.distribution.map((holding, index) => ({
-        ...holding,
-        color: DISTRIBUTION_COLORS[index % DISTRIBUTION_COLORS.length],
-      })),
-    [data.distribution]
-  );
-  const visibleDistributionData = distributionData.slice(0, 8);
-  const hiddenDistributionCount = Math.max(distributionData.length - 8, 0);
-  const bestPerformingFunds = useMemo(
-    () =>
-      [...data.holdings]
-        .sort((left, right) => {
-          const byProfitPct = right.profitLossPct - left.profitLossPct;
-          return byProfitPct || right.profitLossAmount - left.profitLossAmount;
-        })
-        .slice(0, 5),
-    [data.holdings]
-  );
-  const [transactionsPage, setTransactionsPage] = useState(1);
-  const topHolding = distributionData[0];
-  const totalTransactionPages = Math.max(
-    1,
-    Math.ceil(data.recentTransactions.length / TRANSACTIONS_PAGE_SIZE)
-  );
-  const currentTransactionsPage = Math.min(transactionsPage, totalTransactionPages);
-  const paginatedTransactions = data.recentTransactions.slice(
-    (currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE,
-    currentTransactionsPage * TRANSACTIONS_PAGE_SIZE
-  );
-  const {
-    register: registerBuy,
-    handleSubmit: handleBuySubmit,
-    reset: resetBuy,
-    setValue: setBuyValue,
-    clearErrors: clearBuyErrors,
-    formState: { errors: buyErrors, isSubmitting: isBuySubmitting },
-  } = useForm<BuyMfValues>({
-    defaultValues: {
-      previousSchemeCode: "",
-      units: "",
-      nav: "",
-      date: new Date().toISOString().slice(0, 10),
-    },
-  });
-  const {
-    register: registerSell,
-    handleSubmit: handleSellSubmit,
-    reset: resetSell,
-    setValue: setSellValue,
-    formState: { errors: sellErrors, isSubmitting: isSellSubmitting },
-  } = useForm<SellMfValues>({
-    defaultValues: {
-      schemeCode: firstHolding ? String(firstHolding.schemeCode) : "",
-      units: "",
-      nav: firstHolding ? String(firstHolding.currentNav) : "",
-      date: new Date().toISOString().slice(0, 10),
-    },
-  });
+  // Keep the chart's fund valid when holdings change.
+  const activeScheme =
+    historyScheme != null && holdings.some((item) => item.schemeCode === historyScheme)
+      ? historyScheme
+      : (holdings[0]?.schemeCode ?? null);
 
   useEffect(() => {
-    const selectedSchemeCode =
-      activeModal === "buy"
-        ? selectedBuySchemeCode
-        : activeModal === "sell"
-          ? selectedSellSchemeCode
-          : "";
-
-    if (!activeModal || !selectedSchemeCode) {
-      return;
-    }
-
+    if (activeScheme == null) return;
     const controller = new AbortController();
-
-    async function loadLatestNav() {
-      try {
-        const response = await fetch(
-          `/api/mutual-funds/latest-nav?schemeCode=${encodeURIComponent(selectedSchemeCode)}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
-          }
-        );
-        const result = (await response.json().catch(() => null)) as
-          | { latestNav?: number; message?: string }
-          | null;
-
-        if (!response.ok || typeof result?.latestNav !== "number") {
-          throw new Error(result?.message || "Unable to load the latest NAV right now.");
-        }
-
-        setLatestModalNav(result.latestNav);
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setLatestModalNav(null);
-        setLatestModalNavError(
-          error instanceof Error ? error.message : "Unable to load the latest NAV right now."
-        );
-      } finally {
+    const name = holdings.find((item) => item.schemeCode === activeScheme)?.schemeName || "";
+    fetch(`/api/mutual-funds/history?schemeCode=${activeScheme}&schemeName=${encodeURIComponent(name)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = (await response.json().catch(() => null)) as { history?: MutualFundNavHistory } | null;
+        if (!response.ok || !result?.history) throw new Error("no history");
+        setHistory(result.history);
+      })
+      .catch(() => {
         if (!controller.signal.aborted) {
-          setIsLatestModalNavLoading(false);
+          setHistoryError(activeScheme);
         }
-      }
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeScheme]);
+
+  const historyReady = history != null && history.schemeCode === activeScheme;
+  const historyState = historyReady ? "idle" : historyError === activeScheme ? "error" : "loading";
+  const bestFund = useMemo(
+    () => [...holdings].filter((item) => item.investedAmount > 0).sort((a, b) => b.profitLossPct - a.profitLossPct)[0] || null,
+    [holdings]
+  );
+  const largestFund = holdings[0] || null;
+
+  const categories = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const holding of holdings) {
+      const label = estimateFundCategory(holding.schemeName);
+      totals.set(label, (totals.get(label) || 0) + holding.currentValue);
     }
+    return [...totals.entries()].map(([label, value]) => ({ key: label, label, value })).sort((a, b) => b.value - a.value);
+  }, [holdings]);
 
-    void loadLatestNav();
+  const monthly = useMemo(() => {
+    const first = data.months.findIndex((month) => month.totalInvested > 0 || month.totalValue > 0);
+    return first === -1 ? [] : data.months.slice(first);
+  }, [data.months]);
 
-    return () => {
-      controller.abort();
-    };
-  }, [activeModal, selectedBuySchemeCode, selectedSellSchemeCode]);
+  const allocationItems = holdings.map((holding, index) => ({
+    key: String(holding.schemeCode),
+    label: shortSchemeName(holding.schemeName),
+    value: holding.currentValue,
+    color: FUND_COLORS[Math.min(index, FUND_COLORS.length - 1)],
+  }));
 
-  async function handleFundSearch(query: string) {
-    if (!query.trim()) {
-      setFundSearchOptions([]);
-      return;
-    }
+  function openSheet(mode: "buy" | "sell", scheme: number | null = null) {
+    setPresetScheme(scheme);
+    setSheet(mode);
+  }
 
-    setIsSearchingFunds(true);
-
+  async function refreshNavs() {
+    setRefreshing(true);
     try {
-      const response = await fetch(
-        `/api/mutual-funds/search?q=${encodeURIComponent(query)}`,
-        {
-          cache: "no-store",
-        }
-      );
-      const result = (await response.json().catch(() => null)) as
-        | { options?: MfSchemeOption[]; message?: string }
-        | null;
-
-      if (!response.ok) {
-        throw new Error(result?.message || "Unable to search mutual funds.");
-      }
-
-      setFundSearchOptions(result?.options || []);
+      const response = await fetch("/api/market-sync/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assetType: "mutual_fund" }),
+      });
+      const result = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) throw new Error(result?.message || "Unable to refresh NAVs.");
+      toast.success("NAVs refreshed.");
+      router.refresh();
     } catch (error) {
-      setFundSearchOptions([]);
-      toast.error(error instanceof Error ? error.message : "Unable to search mutual funds.");
+      toast.error(error instanceof Error ? error.message : "Unable to refresh NAVs.");
     } finally {
-      setIsSearchingFunds(false);
+      setRefreshing(false);
     }
   }
 
-  function closeModal() {
-    setActiveModal(null);
-    setFundSearchOptions([]);
-    setSelectedBuyFund([]);
-    setSelectedBuySchemeCode("");
-    setSelectedSellSchemeCode(firstHolding ? String(firstHolding.schemeCode) : "");
-    setLatestModalNav(null);
-    setLatestModalNavError(null);
-    setIsLatestModalNavLoading(false);
-    resetBuy({
-      previousSchemeCode: "",
-      units: "",
-      nav: "",
-      date: new Date().toISOString().slice(0, 10),
-    });
-    resetSell({
-      schemeCode: firstHolding ? String(firstHolding.schemeCode) : "",
-      units: "",
-      nav: firstHolding ? String(firstHolding.currentNav) : "",
-      date: new Date().toISOString().slice(0, 10),
-    });
+  async function confirmDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      const response = await fetch(`/api/mutual-funds?id=${encodeURIComponent(toDelete.id)}`, { method: "DELETE" });
+      const result = (await response.json().catch(() => null)) as
+        | { message?: string; dashboard?: MutualFundDashboardData }
+        | null;
+      if (!response.ok) throw new Error(result?.message || "Unable to delete the transaction.");
+      toast.success("Transaction deleted.");
+      if (result?.dashboard) setData(result.dashboard);
+      setToDelete(null);
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete the transaction.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
-  async function saveTransaction(payload: {
-    schemeCode: number;
-    schemeName: string;
-    transactionType: MutualFundTransactionType;
-    units: number;
-    nav: number;
-    date: string;
-  }) {
-    const response = await fetch("/api/mutual-funds", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const result = (await response.json().catch(() => null)) as
-      | { message?: string; dashboard?: MutualFundDashboardData }
-      | null;
-
-    if (!response.ok) {
-      throw new Error(result?.message || "Unable to save mutual fund transaction.");
-    }
-
-    toast.success(
-      result?.message ||
-        (payload.transactionType === "buy"
-          ? "Mutual fund purchase saved."
-          : "Mutual fund sale saved.")
-    );
-
-    if (result?.dashboard) {
-      setData(result.dashboard);
-    }
-    closeModal();
-  }
-
-  async function reloadDashboard() {
-    const response = await fetch("/api/mutual-funds", { cache: "no-store" });
-    const result = (await response.json().catch(() => null)) as
-      | { dashboard?: MutualFundDashboardData; message?: string }
-      | null;
-
-    if (!response.ok || !result?.dashboard) {
-      throw new Error(result?.message || "Unable to reload mutual funds.");
-    }
-
-    setData(result.dashboard);
-  }
-
-  function handleRefreshNavs() {
-    startTransition(async () => {
-      try {
-        const response = await fetch("/api/market-sync/refresh", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ assetType: "mutual_fund" }),
-        });
-        const result = (await response.json().catch(() => null)) as
-          | { batch?: MarketSyncBatchSummary; message?: string }
-          | null;
-
-        if (!response.ok || !result?.batch) {
-          throw new Error(result?.message || "Unable to refresh mutual fund NAVs.");
+  const tradeSheets = (
+    <>
+      <MutualFundTradeSheet
+        mode={sheet}
+        onClose={() => setSheet(null)}
+        holdings={holdings}
+        previousFunds={data.previousFunds}
+        presetSchemeCode={presetScheme}
+        currency={currency}
+        onSaved={(dashboard) => {
+          if (dashboard) setData(dashboard);
+          router.refresh();
+        }}
+      />
+      <ConfirmDeleteSheet
+        open={toDelete !== null}
+        title="Delete this transaction?"
+        message={
+          toDelete
+            ? `${toDelete.transactionType === "buy" ? "Purchase" : "Sale"} of ${formatNumber(toDelete.units, 4)} units of ${toDelete.schemeName} on ${formatDate(toDelete.date)} will be removed and your holdings recalculated. This can't be undone.`
+            : ""
         }
+        loading={deleting}
+        onClose={() => setToDelete(null)}
+        onConfirm={confirmDelete}
+      />
+    </>
+  );
 
-        setMarketSyncBatch(result.batch);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Unable to refresh mutual fund NAVs.");
-      }
-    });
-  }
-
-  async function onBuy(values: BuyMfValues) {
-    const previousFund = values.previousSchemeCode
-      ? data.previousFunds.find(
-          (item) => String(item.schemeCode) === values.previousSchemeCode
-        )
-      : null;
-    const fund = previousFund || selectedBuyFund[0];
-
-    if (!fund) {
-      toast.error("Please select a previous fund or search for a mutual fund.");
-      return;
-    }
-
-    try {
-      await saveTransaction({
-        transactionType: "buy",
-        schemeCode: fund.schemeCode,
-        schemeName: fund.schemeName,
-        units: Number(values.units),
-        nav: Number(values.nav),
-        date: values.date,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Unable to save mutual fund purchase."
-      );
-    }
-  }
-
-  async function onSell(values: SellMfValues) {
-    const holding = data.holdings.find(
-      (item) => String(item.schemeCode) === values.schemeCode
+  if (!hasData) {
+    return (
+      <Page>
+        <Card>
+          <EmptyState
+            icon={Landmark}
+            title="Track your mutual funds"
+            message="Add your first purchase and NAVs, returns and your monthly trend will update automatically every day."
+            action={
+              <Button variant="primary" icon={Plus} onClick={() => openSheet("buy")}>
+                Add purchase
+              </Button>
+            }
+          />
+        </Card>
+        {tradeSheets}
+      </Page>
     );
-
-    if (!holding) {
-      toast.error("Please choose a fund to sell.");
-      return;
-    }
-
-    try {
-      await saveTransaction({
-        transactionType: "sell",
-        schemeCode: holding.schemeCode,
-        schemeName: holding.schemeName,
-        units: Number(values.units),
-        nav: Number(values.nav),
-        date: values.date,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Unable to save mutual fund sale."
-      );
-    }
   }
 
-  const previousBuyFundField = registerBuy("previousSchemeCode", {
-    validate: (value) =>
-      value || selectedBuyFund.length
-        ? true
-        : "Select a previous fund or search for a mutual fund.",
-  });
-  const sellSchemeField = registerSell("schemeCode", {
-    required: "Please choose a fund.",
-  });
+  const xirr = data.xirr;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
-      <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
-        <div className="grid gap-4 xl:grid-cols-[1.45fr_0.9fr_0.9fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-neutral-500">Current Portfolio Value</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
-                  {formatter.format(data.totalPortfolioValue)}
-                </h2>
-                <p className="mt-2 text-sm text-neutral-500">
-                  Invested value: {formatter.format(data.totalInvestedAmount)}
-                </p>
-                <div
-                  className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
-                    monthTrendUp
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-rose-50 text-rose-700"
-                  }`}
-                >
-                  {monthTrendUp ? (
-                    <ArrowUpRight className="size-4" />
-                  ) : (
-                    <ArrowDownRight className="size-4" />
-                  )}
-                  <span>
-                    {monthTrendUp ? "+" : ""}
-                    {data.monthOverMonthChangePct.toFixed(1)}%
-                  </span>
-                  <span className="text-current/70">vs last month</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isPending}
-                  onClick={handleRefreshNavs}
-                  type="button"
-                >
-                  <RefreshCw className={`size-4 ${isPending ? "animate-spin" : ""}`} />
-                  <span>Refresh NAVs</span>
-                </button>
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                  onClick={() => {
-                    setLatestModalNav(null);
-                    setLatestModalNavError(null);
-                    setIsLatestModalNavLoading(false);
-                    setActiveModal("buy");
-                  }}
-                  type="button"
-                >
-                  <Plus className="size-4" />
-                  <span>Buy Units</span>
-                </button>
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!data.holdings.length}
-                  onClick={() => {
-                    setSelectedSellSchemeCode(firstHolding ? String(firstHolding.schemeCode) : "");
-                    setLatestModalNav(null);
-                    setLatestModalNavError(null);
-                    setIsLatestModalNavLoading(Boolean(firstHolding));
-                    setActiveModal("sell");
-                  }}
-                  type="button"
-                >
-                  <Minus className="size-4" />
-                  <span>Sell Units</span>
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <SummaryCard
-            icon={<Landmark className="size-5 text-neutral-950" />}
-            subtitle={`Realized ${realizedProfitUp ? "Profit" : "Loss"}`}
-            title={formatSignedCurrency(data.totalRealizedProfitAmount, formatter)}
-            tone={realizedProfitUp ? "positive" : "negative"}
-            detail={`${formatSignedPercent(data.totalRealizedProfitPct)} booked`}
-          />
-
-          <SummaryCard
-            icon={<Wallet className="size-5 text-neutral-950" />}
-            subtitle={`Unrealized ${overallProfitUp ? "Profit" : "Loss"}`}
-            title={formatSignedCurrency(data.totalProfitLossAmount, formatter)}
-            tone={overallProfitUp ? "positive" : "negative"}
-            detail={`${formatSignedPercent(data.totalProfitLossPct)} overall`}
-          />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                  Monthly Portfolio Trend
-                </h3>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Portfolio value and invested capital across the last 6 months.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 h-[21rem]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  barCategoryGap="22%"
-                  barGap={0}
-                  data={chartData}
-                  margin={{ top: 12, right: 12, left: 0, bottom: 0 }}
-                >
-                  <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 4" vertical={false} />
-                  <XAxis
-                    axisLine={false}
-                    dataKey="label"
-                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
-                    tickFormatter={(value) => compactCurrency(Number(value) || 0, formatter)}
-                    tickLine={false}
-                    width={74}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "var(--wc-tooltip-bg)",
-                      border: "1px solid var(--wc-tooltip-border)",
-                      borderRadius: "16px",
-                      boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
-                      color: "var(--wc-tooltip-text)",
-                    }}
-                    formatter={(value, name) => [
-                      formatter.format(Number(value) || 0),
-                      name === "totalValue" ? "Portfolio Value" : "Invested Capital",
-                    ]}
-                    labelStyle={{ color: "var(--wc-tooltip-text)", fontWeight: 600 }}
-                  />
-                  <Bar
-                    dataKey="totalInvested"
-                    fill="#16a34a"
-                    radius={[8, 8, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="totalValue"
-                    fill="#2563eb"
-                    radius={[8, 8, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex h-full flex-col justify-between gap-6">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                  Largest Position
-                </h3>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Your highest allocation from the latest monthly snapshot.
-                </p>
-              </div>
-
-              <div className="rounded-[1.75rem] border border-[#eef2f7] bg-[#f8fbff] p-5">
-                <div className="flex items-center gap-3">
-                  <div className="flex size-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
-                    <PieChartIcon className="size-5" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">
-                      Top Holding
-                    </p>
-                    <p className="mt-1 text-lg font-semibold tracking-tight text-neutral-950">
-                      {topHolding?.schemeName || "No holdings yet"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 grid grid-cols-2 gap-3">
-                  <MetricChip
-                    label="Current Value"
-                    value={
-                      topHolding
-                        ? formatter.format(topHolding.currentValue)
-                        : formatter.format(0)
-                    }
-                  />
-                  <MetricChip
-                    label="Invested Value"
-                    value={
-                      topHolding
-                        ? formatter.format(topHolding.investedAmount)
-                        : formatter.format(0)
-                    }
-                  />
-                  <MetricChip
-                    label="Average NAV"
-                    value={topHolding ? formatter.format(topHolding.averageNav) : formatter.format(0)}
-                  />
-                  <MetricChip
-                    label={topHolding && topHolding.profitLossAmount < 0 ? "Loss" : "Profit"}
-                    value={
-                      topHolding
-                        ? formatSignedCurrency(topHolding.profitLossAmount, formatter)
-                        : formatter.format(0)
-                    }
-                    tone={topHolding && topHolding.profitLossAmount < 0 ? "negative" : "positive"}
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                Portfolio Distribution
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Allocation on the left, 12-month NAV movement for a selected holding on the right.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-6 xl:grid-cols-2">
-            <div className="rounded-[1.75rem] border border-[#eef2f7] bg-[#fafaf8] p-5">
-              <div>
-                <div>
-                  <h4 className="text-base font-semibold text-neutral-950">Allocation Split</h4>
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Current value spread across your active mutual fund holdings.
-                  </p>
-                </div>
-              </div>
-
-              {distributionData.length ? (
-                <>
-                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                    {visibleDistributionData.map((entry) => (
-                      <div
-                        key={entry.schemeCode}
-                        className="flex min-w-0 items-center gap-2 rounded-[0.9rem] border border-[#edf1f7] bg-white/85 px-3 py-2"
-                        title={entry.schemeName}
-                      >
-                        <span
-                          className="size-2.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: entry.color }}
-                        />
-                        <span className="min-w-0 truncate text-xs font-medium text-neutral-600">
-                          {entry.schemeName}
-                        </span>
-                      </div>
-                    ))}
-                    {hiddenDistributionCount ? (
-                      <button
-                        className="flex min-w-0 items-center justify-center rounded-[0.9rem] border border-dashed border-[#d6deea] bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition hover:border-[#111111] hover:text-neutral-950"
-                        onClick={() => setIsDistributionModalOpen(true)}
-                        type="button"
-                      >
-                        {hiddenDistributionCount} more
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <div className="mt-4 h-[22rem] rounded-[1.25rem] bg-white p-3 shadow-sm">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          cx="50%"
-                          cy="50%"
-                          data={distributionData}
-                          dataKey="currentValue"
-                          endAngle={-270}
-                          innerRadius={0}
-                          isAnimationActive
-                          label={renderDistributionLabel}
-                          labelLine={false}
-                          nameKey="schemeName"
-                          outerRadius="86%"
-                          paddingAngle={distributionData.length > 1 ? 1 : 0}
-                          startAngle={90}
-                          stroke="#ffffff"
-                          strokeWidth={2}
-                        >
-                          {distributionData.map((entry) => (
-                            <Cell key={entry.schemeCode} fill={entry.color} />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                </>
+    <Page>
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink-3">Current value</p>
+            <p className="tabular mt-1 text-[2.1rem] leading-tight font-semibold tracking-tight text-ink sm:text-[2.6rem]">
+              {formatMoney(data.totalPortfolioValue, { currency, decimals: 0 })}
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {data.totalDayChange != null ? (
+                <Delta value={data.totalDayChange} percent={data.totalDayChangePct} currency={currency} suffix="1D" />
               ) : (
-                <div className="flex h-[18rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white text-sm text-neutral-500">
-                  No mutual fund distribution yet.
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-[1.75rem] border border-[#eef2f7] bg-[#fafaf8] p-5">
-              <div>
-                <div>
-                  <h4 className="text-base font-semibold text-neutral-950">
-                    Best Performing Funds
-                  </h4>
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Top 5 holdings ranked by return percentage.
-                  </p>
-                </div>
-              </div>
-
-              {bestPerformingFunds.length ? (
-                <div className="mt-4 grid gap-2.5">
-                  {bestPerformingFunds.map((fund, index) => {
-                    const profitUp = fund.profitLossAmount >= 0;
-
-                    return (
-                      <div
-                        key={fund.schemeCode}
-                        className="flex items-center gap-3 rounded-[1.2rem] border border-[#e6ebf2] bg-white px-3 py-3 shadow-sm"
-                      >
-                        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#f3f6fb] text-xs font-semibold text-neutral-950">
-                          #{index + 1}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[13px] font-semibold text-neutral-950">
-                            {fund.schemeName}
-                          </p>
-                          <p className="mt-0.5 text-[11px] text-neutral-500">
-                            Current value {formatter.format(fund.currentValue)}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p
-                            className={`text-[13px] font-semibold ${
-                              profitUp ? "text-emerald-600" : "text-rose-600"
-                            }`}
-                          >
-                            {formatSignedPercent(fund.profitLossPct)}
-                          </p>
-                          <p className="mt-0.5 text-[11px] text-neutral-500">
-                            {formatSignedCurrency(fund.profitLossAmount, formatter)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="mt-5 flex h-[22rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[#dbe2ee] bg-white text-sm text-neutral-500">
-                  Buy a fund first to see the top performers.
-                </div>
+                <span className="text-sm text-ink-3">Day change appears after the next NAV update</span>
               )}
             </div>
           </div>
-        </section>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+            <Button variant="primary" icon={Plus} onClick={() => openSheet("buy")} className="flex-1 sm:flex-none">
+              Add purchase
+            </Button>
+            <Button onClick={() => openSheet("sell")} disabled={!holdings.length} className="flex-1 sm:flex-none">
+              Record sale
+            </Button>
+            <Button icon={RefreshCw} loading={refreshing} onClick={refreshNavs} className="flex-1 sm:flex-none">
+              Refresh NAVs
+            </Button>
+          </div>
+        </div>
 
-        <MutualFundsHoldingsTable
-          currencyCode={currencyCode}
-          emptyMessage="No holdings yet. Add your first mutual fund purchase to start tracking."
-          holdings={data.topHoldings}
-          limit={5}
-          showViewAll={data.holdings.length > 0}
-          subtitle="Top 5 holdings ranked by current value."
-          title="Top 5 Holdings"
+        <dl className="mt-5 grid grid-cols-2 gap-3 border-t border-line pt-4 sm:grid-cols-4">
+          <div>
+            <dt className="text-xs text-ink-3">Invested</dt>
+            <dd className="tabular text-base font-semibold text-ink">{formatMoney(data.totalInvestedAmount, { currency, decimals: 0 })}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-3">Total returns</dt>
+            <dd>
+              <Delta value={data.totalProfitLossAmount} percent={data.totalProfitLossPct} currency={currency} className="font-semibold" />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-3">Realised profit</dt>
+            <dd className={cn("tabular text-base font-semibold", toneOf(data.totalRealizedProfitAmount) === "loss" ? "text-loss" : toneOf(data.totalRealizedProfitAmount) === "gain" ? "text-gain" : "text-ink")}>
+              {formatMoney(data.totalRealizedProfitAmount, { currency, decimals: 0 })}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-ink-3" title="Annualised return. Shown once you have a year of history.">
+              XIRR
+            </dt>
+            <dd className={cn("tabular text-base font-semibold", (xirr ?? 0) >= 0 ? "text-gain" : "text-loss")}>
+              {xirr == null ? <span className="text-sm font-normal text-ink-3">after 1 yr</span> : formatPercent(xirr, { sign: true, decimals: 1 })}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-3 text-xs text-ink-3">
+          NAVs last updated {data.lastUpdatedAt ? `${formatRelativeTime(data.lastUpdatedAt)} (${formatDate(data.lastUpdatedAt)})` : "— not yet"}
+        </p>
+      </Card>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile icon={Layers} label="Funds" value={String(holdings.length)} caption={holdings.length === 1 ? "active holding" : "active holdings"} />
+        <StatTile
+          icon={Trophy}
+          label="Best fund"
+          value={bestFund ? formatPercent(bestFund.profitLossPct, { sign: true, decimals: 1 }) : "—"}
+          valueClassName={bestFund && bestFund.profitLossPct < 0 ? "text-loss" : "text-gain"}
+          caption={bestFund ? shortSchemeName(bestFund.schemeName) : "No holdings"}
         />
-
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                Recent Transactions
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Latest mutual fund buy and sell activity saved in the portfolio.
-              </p>
-            </div>
-            {data.recentTransactions.length ? (
-              <p className="text-sm font-medium text-neutral-500 sm:text-right">
-                Showing {(currentTransactionsPage - 1) * TRANSACTIONS_PAGE_SIZE + 1}-
-                {Math.min(
-                  currentTransactionsPage * TRANSACTIONS_PAGE_SIZE,
-                  data.recentTransactions.length
-                )}{" "}
-                of {data.recentTransactions.length}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="mt-5 grid gap-3">
-            {data.recentTransactions.length ? (
-              paginatedTransactions.map((transaction) => {
-                const positive = transaction.transactionType === "buy";
-
-                return (
-                  <div
-                    key={transaction.id}
-                    className="flex flex-col gap-3 rounded-[1.4rem] border border-[#eef2f7] bg-[#fafaf8] px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0">
-                      <p className="break-words text-sm font-semibold leading-6 text-neutral-950 sm:truncate sm:text-base">
-                        {transaction.schemeName}
-                      </p>
-                      <p className="mt-1 text-sm text-neutral-500">
-                        {positive ? "Buy" : "Sell"} {transaction.units.toFixed(2)} units on{" "}
-                        {new Intl.DateTimeFormat("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        }).format(new Date(transaction.date))}
-                      </p>
-                    </div>
-
-                    <div className="min-w-0 sm:text-right">
-                      <p
-                        className={`text-base font-semibold ${
-                          positive ? "text-emerald-600" : "text-rose-600"
-                        }`}
-                      >
-                        {positive ? "+" : "-"}
-                        {formatter.format(transaction.amount)}
-                      </p>
-                      <p className="mt-1 text-xs font-medium uppercase tracking-[0.14em] text-neutral-400">
-                        NAV {formatter.format(transaction.nav)}
-                      </p>
-                      {transaction.transactionType === "sell" &&
-                      transaction.realizedProfitAmount != null ? (
-                        <p
-                          className={`mt-1 text-xs font-medium ${
-                            transaction.realizedProfitAmount >= 0
-                              ? "text-emerald-600"
-                              : "text-rose-600"
-                          }`}
-                        >
-                          Realized {formatSignedCurrency(transaction.realizedProfitAmount, formatter)}
-                          {transaction.realizedProfitPct != null
-                            ? ` • ${formatSignedPercent(transaction.realizedProfitPct)}`
-                            : ""}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="rounded-[1.5rem] border border-dashed border-[#d9dfeb] bg-[#fafaf8] px-5 py-10 text-center text-sm text-neutral-500">
-                No mutual fund transactions yet. Use the buy modal to add your first entry.
-              </div>
-            )}
-          </div>
-
-          {data.recentTransactions.length > TRANSACTIONS_PAGE_SIZE ? (
-            <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#eef2f7] pt-4">
-              <p className="text-sm text-neutral-500">
-                Page {currentTransactionsPage} of {totalTransactionPages}
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  className="rounded-xl border border-[#dbe2ee] bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={currentTransactionsPage === 1}
-                  onClick={() => setTransactionsPage((page) => Math.max(1, page - 1))}
-                  type="button"
-                >
-                  Previous
-                </button>
-                <button
-                  className="rounded-xl border border-[#dbe2ee] bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={currentTransactionsPage === totalTransactionPages}
-                  onClick={() =>
-                    setTransactionsPage((page) => Math.min(totalTransactionPages, page + 1))
-                  }
-                  type="button"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </section>
+        <StatTile
+          icon={TrendingUp}
+          label="Largest holding"
+          value={largestFund ? formatPercent(largestFund.allocationPct, { decimals: 1 }) : "—"}
+          caption={largestFund ? shortSchemeName(largestFund.schemeName) : "No holdings"}
+        />
+        <StatTile
+          icon={CalendarClock}
+          label="Month on month"
+          value={formatCompactMoney(data.monthOverMonthChangeAmount, { currency })}
+          valueClassName={toneOf(data.monthOverMonthChangeAmount) === "loss" ? "text-loss" : toneOf(data.monthOverMonthChangeAmount) === "gain" ? "text-gain" : undefined}
+          caption={`${formatPercent(data.monthOverMonthChangePct, { sign: true, decimals: 1 })} vs last month`}
+        />
       </div>
 
-      {activeModal === "buy" ? (
-        <ModalFrame
-          description="Search the mutual fund, then enter units, NAV, and purchase date."
-          title="Buy Mutual Fund Units"
-          onClose={closeModal}
-        >
-          <form className="mt-6 space-y-5" onSubmit={handleBuySubmit(onBuy)}>
-            <div className="space-y-2">
-              <span className="text-sm font-medium text-neutral-800">Mutual Fund</span>
-              {data.previousFunds.length ? (
-                <label className="block space-y-2">
-                  <span className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">
-                    Previous Fund
-                  </span>
-                  <select
-                    className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                    {...previousBuyFundField}
-                    onChange={(event) => {
-                      void previousBuyFundField.onChange(event);
-
-                      if (!event.target.value) {
-                        setLatestModalNav(null);
-                        setLatestModalNavError(null);
-                        setIsLatestModalNavLoading(false);
-                        setSelectedBuySchemeCode("");
-                        return;
-                      }
-
-                      setSelectedBuyFund([]);
-                      setFundSearchOptions([]);
-                      clearBuyErrors("previousSchemeCode");
-                      setLatestModalNav(null);
-                      setLatestModalNavError(null);
-                      setIsLatestModalNavLoading(true);
-                      setSelectedBuySchemeCode(event.target.value);
-
-                      const matchingHolding = data.holdings.find(
-                        (holding) => String(holding.schemeCode) === event.target.value
-                      );
-
-                      if (matchingHolding) {
-                        setBuyValue("nav", String(matchingHolding.currentNav), {
-                          shouldDirty: true,
-                          shouldValidate: true,
-                        });
-                      }
-                    }}
-                  >
-                    <option value="">Select from previous funds</option>
-                    {data.previousFunds.map((fund) => (
-                      <option key={fund.schemeCode} value={fund.schemeCode}>
-                        {fund.schemeName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <span className="block text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">
-                Search Fund
-              </span>
-              <AsyncTypeahead
-                clearButton
-                delay={250}
-                filterBy={() => true}
-                id="mf-search"
-                inputProps={{
-                  className:
-                    "h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5",
-                }}
-                isLoading={isSearchingFunds}
-                labelKey="schemeName"
-                minLength={2}
-                onChange={(selected) => {
-                  setSelectedBuyFund(selected as MfSchemeOption[]);
-
-                  if (selected.length) {
-                    setLatestModalNav(null);
-                    setLatestModalNavError(null);
-                    setIsLatestModalNavLoading(true);
-                    setSelectedBuySchemeCode(String((selected[0] as MfSchemeOption).schemeCode));
-                    setBuyValue("previousSchemeCode", "", {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    });
-                    clearBuyErrors("previousSchemeCode");
-                  } else {
-                    setLatestModalNav(null);
-                    setLatestModalNavError(null);
-                    setIsLatestModalNavLoading(false);
-                    setSelectedBuySchemeCode("");
-                  }
-                }}
-                onSearch={handleFundSearch}
-                options={fundSearchOptions}
-                placeholder="Search by fund name"
-                renderMenuItemChildren={(option, props) => {
-                  const fund = option as MfSchemeOption;
-
-                  return (
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium text-neutral-950">
-                        <Highlighter search={props.text}>{fund.schemeName}</Highlighter>
-                      </span>
-                      <span className="mt-1 text-xs uppercase tracking-[0.14em] text-neutral-400">
-                        Scheme Code: {fund.schemeCode}
-                      </span>
-                    </div>
-                  );
-                }}
-                searchText="Searching mutual funds..."
-                selected={selectedBuyFund}
-                useCache={false}
-              />
-              {buyErrors.previousSchemeCode ? (
-                <span className="text-sm text-destructive">
-                  {buyErrors.previousSchemeCode.message}
-                </span>
-              ) : null}
-              {!selectedBuyFund.length ? (
-                <p className="text-xs text-neutral-500">
-                  Start typing at least 2 characters to search for a different fund.
-                </p>
-              ) : null}
-              {selectedBuySchemeCode ? (
-                <ModalNavHint
-                  formatter={formatter}
-                  isLoading={isLatestModalNavLoading}
-                  latestNav={latestModalNav}
-                  message={latestModalNavError}
-                />
-              ) : null}
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Units Bought</span>
-                <input
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  placeholder="125.50"
-                  step="0.0001"
-                  type="number"
-                  {...registerBuy("units", {
-                    required: "Units are required.",
-                    validate: (value) =>
-                      Number(value) > 0 || "Units must be greater than zero.",
-                  })}
-                />
-                {buyErrors.units ? (
-                  <span className="text-sm text-destructive">{buyErrors.units.message}</span>
-                ) : null}
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">NAV</span>
-                <input
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  placeholder="87.45"
-                  step="0.0001"
-                  type="number"
-                  {...registerBuy("nav", {
-                    required: "NAV is required.",
-                    validate: (value) => Number(value) > 0 || "NAV must be greater than zero.",
-                  })}
-                />
-                {buyErrors.nav ? (
-                  <span className="text-sm text-destructive">{buyErrors.nav.message}</span>
-                ) : null}
-              </label>
-            </div>
-
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-neutral-800">Purchase Date</span>
-              <input
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                max={new Date().toISOString().slice(0, 10)}
-                type="date"
-                {...registerBuy("date", {
-                  required: "Date is required.",
-                })}
-              />
-              {buyErrors.date ? (
-                <span className="text-sm text-destructive">{buyErrors.date.message}</span>
-              ) : null}
-            </label>
-
-            <ModalActions
-              isSubmitting={isBuySubmitting || isPending}
-              onCancel={closeModal}
-              submitLabel="Save Buy"
-              submittingLabel="Saving..."
+      {holdings.length ? (
+        <div className="mt-4 grid gap-4 lg:grid-cols-5">
+          <Card className="lg:col-span-3">
+            <CardHeader title="Allocation by fund" subtitle={`${formatCompactMoney(data.totalPortfolioValue, { currency })} across ${holdings.length} fund${holdings.length === 1 ? "" : "s"}, smaller funds grouped as Other`} />
+            <AllocationBar items={allocationItems} currency={currency} maxItems={7} />
+          </Card>
+          <Card className="lg:col-span-2">
+            <CardHeader title="Category split" subtitle="Estimated from fund names" action={<Badge tone="warn">Estimated</Badge>} />
+            <RankedBars
+              items={categories.map((category) => ({
+                key: category.key,
+                label: category.label,
+                value: category.value,
+                caption: formatPercent(data.totalPortfolioValue ? (category.value / data.totalPortfolioValue) * 100 : 0, { decimals: 0 }),
+              }))}
+              currency={currency}
+              color={ASSET_COLORS.mutualFunds}
             />
-          </form>
-        </ModalFrame>
+          </Card>
+        </div>
       ) : null}
 
-      {activeModal === "sell" ? (
-        <ModalFrame
-          description="Pick a tracked holding, then enter units, sell NAV, and sell date."
-          title="Sell Mutual Fund Units"
-          onClose={closeModal}
-        >
-          <form className="mt-6 space-y-5" onSubmit={handleSellSubmit(onSell)}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-neutral-800">Mutual Fund</span>
-              <select
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                {...sellSchemeField}
-                onChange={(event) => {
-                  void sellSchemeField.onChange(event);
-                  setLatestModalNav(null);
-                  setLatestModalNavError(null);
-                  setIsLatestModalNavLoading(true);
-                  setSelectedSellSchemeCode(event.target.value);
-
-                  const matchingHolding = data.holdings.find(
-                    (holding) => String(holding.schemeCode) === event.target.value
-                  );
-
-                  if (matchingHolding) {
-                    setSellValue("nav", String(matchingHolding.currentNav), {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    });
-                  }
-                }}
-              >
-                {data.holdings.map((holding) => (
-                  <option key={holding.schemeCode} value={holding.schemeCode}>
-                    {holding.schemeName}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Invested vs value" subtitle="Month-end, last 12 months" />
+          {monthly.length >= 2 ? (
+            <TrendChart
+              data={monthly}
+              xKey="label"
+              xFormatter={(value) => String(value)}
+              height={240}
+              currency={currency}
+              series={[
+                { key: "totalValue", label: "Current value", color: "var(--wc-asset-funds)" },
+                { key: "totalInvested", label: "Invested", color: "var(--wc-ink-3)" },
+              ]}
+            />
+          ) : (
+            <p className="py-12 text-center text-sm text-ink-3">The trend fills in as monthly snapshots are saved.</p>
+          )}
+        </Card>
+        <Card>
+          <CardHeader
+            title="NAV history"
+            subtitle={historyReady && history ? `Latest NAV ${formatMoney(history.latestNav, { currency, decimals: 2 })}` : "Per-fund NAV movement"}
+            action={historyReady && history ? <Delta value={history.changeAmount} percent={history.changePct} currency={currency} size="xs" /> : undefined}
+          />
+          {holdings.length > 1 ? (
+            <Field label="Fund" className="mb-3">
+              <Select value={activeScheme ?? ""} onChange={(event) => setHistoryScheme(Number(event.target.value))}>
+                {holdings.map((item) => (
+                  <option key={item.schemeCode} value={item.schemeCode}>
+                    {shortSchemeName(item.schemeName)}
                   </option>
                 ))}
-              </select>
-              <ModalNavHint
-                formatter={formatter}
-                isLoading={isLatestModalNavLoading}
-                latestNav={latestModalNav}
-                message={latestModalNavError}
-              />
-              {sellErrors.schemeCode ? (
-                <span className="text-sm text-destructive">{sellErrors.schemeCode.message}</span>
-              ) : null}
-            </label>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Units Sold</span>
-                <input
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  placeholder="35.25"
-                  step="0.0001"
-                  type="number"
-                  {...registerSell("units", {
-                    required: "Units are required.",
-                    validate: (value) =>
-                      Number(value) > 0 || "Units must be greater than zero.",
-                  })}
-                />
-                {sellErrors.units ? (
-                  <span className="text-sm text-destructive">{sellErrors.units.message}</span>
-                ) : null}
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Sell NAV</span>
-                <input
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  placeholder="93.10"
-                  step="0.0001"
-                  type="number"
-                  {...registerSell("nav", {
-                    required: "NAV is required.",
-                    validate: (value) => Number(value) > 0 || "NAV must be greater than zero.",
-                  })}
-                />
-                {sellErrors.nav ? (
-                  <span className="text-sm text-destructive">{sellErrors.nav.message}</span>
-                ) : null}
-              </label>
-            </div>
-
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-neutral-800">Sell Date</span>
-              <input
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                max={new Date().toISOString().slice(0, 10)}
-                type="date"
-                {...registerSell("date", {
-                  required: "Date is required.",
-                })}
-              />
-              {sellErrors.date ? (
-                <span className="text-sm text-destructive">{sellErrors.date.message}</span>
-              ) : null}
-            </label>
-
-            <ModalActions
-              isSubmitting={isSellSubmitting || isPending}
-              onCancel={closeModal}
-              submitLabel="Save Sell"
-              submittingLabel="Saving..."
+              </Select>
+            </Field>
+          ) : null}
+          {historyState === "loading" ? (
+            <p className="py-12 text-center text-sm text-ink-3">Loading NAV history…</p>
+          ) : historyReady && history && history.points.length >= 2 ? (
+            <TrendChart
+              data={history.points}
+              xKey="label"
+              height={holdings.length > 1 ? 190 : 240}
+              currency={currency}
+              series={[{ key: "nav", label: "NAV", color: "var(--wc-asset-funds)" }]}
+              valueFormatter={(value) => formatMoney(value, { currency, decimals: 2 })}
             />
-          </form>
-        </ModalFrame>
-      ) : null}
-
-      {isDistributionModalOpen ? (
-        <ModalFrame
-          description="All mutual fund allocations with the complete distribution chart."
-          maxWidthClassName="max-w-5xl"
-          title="All Fund Allocations"
-          onClose={() => setIsDistributionModalOpen(false)}
-        >
-          <div className="mt-6 space-y-5">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {distributionData.map((entry) => (
-                <div
-                  key={entry.schemeCode}
-                  className="flex min-w-0 items-center gap-2 rounded-[0.9rem] border border-[#edf1f7] bg-[#fafaf8] px-3 py-2"
-                  title={entry.schemeName}
-                >
-                  <span
-                    className="size-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: entry.color }}
-                  />
-                  <span className="min-w-0 truncate text-xs font-medium text-neutral-700">
-                    {entry.schemeName}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <div className="h-[28rem] rounded-[1.5rem] border border-[#eef2f7] bg-[#fafaf8] p-4 shadow-sm">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    cx="50%"
-                    cy="50%"
-                    data={distributionData}
-                    dataKey="currentValue"
-                    endAngle={-270}
-                    innerRadius={0}
-                    isAnimationActive
-                    label={renderDistributionLabel}
-                    labelLine={false}
-                    nameKey="schemeName"
-                    outerRadius="88%"
-                    paddingAngle={distributionData.length > 1 ? 1 : 0}
-                    startAngle={90}
-                    stroke="#ffffff"
-                    strokeWidth={2}
-                  >
-                    {distributionData.map((entry) => (
-                      <Cell key={entry.schemeCode} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </ModalFrame>
-      ) : null}
-
-      {marketSyncBatch ? (
-        <ModalFrame
-          description="Approve selected NAV updates or approve all before syncing them to the database."
-          maxWidthClassName="max-w-6xl"
-          title="Approve refreshed NAVs"
-          onClose={() => setMarketSyncBatch(null)}
-        >
-          <div className="mt-6">
-            <MarketSyncBatchReview
-              batch={marketSyncBatch}
-              compact
-              currencyCode={currencyCode}
-              onBatchChange={setMarketSyncBatch}
-              onSynced={async () => {
-                await reloadDashboard();
-                setMarketSyncBatch(null);
-              }}
-            />
-          </div>
-        </ModalFrame>
-      ) : null}
-    </div>
-  );
-}
-
-function ModalNavHint({
-  latestNav,
-  isLoading,
-  message,
-  formatter,
-}: {
-  latestNav: number | null;
-  isLoading: boolean;
-  message: string | null;
-  formatter: Intl.NumberFormat;
-}) {
-  if (isLoading) {
-    return <p className="text-xs text-neutral-500">Loading latest NAV...</p>;
-  }
-
-  if (message) {
-    return <p className="text-xs text-rose-600">{message}</p>;
-  }
-
-  if (latestNav == null) {
-    return null;
-  }
-
-  return (
-    <p className="rounded-[0.9rem] border border-[#e6ebf2] bg-[#f8fbff] px-3 py-2 text-xs font-medium text-neutral-600">
-      Latest NAV from live data:{" "}
-      <span className="font-semibold text-neutral-950">{formatter.format(latestNav)}</span>
-    </p>
-  );
-}
-
-function SummaryCard({
-  title,
-  subtitle,
-  icon,
-  tone,
-  detail,
-}: {
-  title: string;
-  subtitle: string;
-  icon: React.ReactNode;
-  tone: "positive" | "negative" | "neutral";
-  detail?: string;
-}) {
-  const accent =
-    tone === "positive"
-      ? "bg-emerald-50"
-      : tone === "negative"
-        ? "bg-rose-50"
-        : "bg-[#f2f5ef]";
-  const valueClass =
-    tone === "positive"
-      ? "text-emerald-600"
-      : tone === "negative"
-        ? "text-rose-600"
-        : "text-neutral-950";
-  const detailClass =
-    tone === "positive"
-      ? "text-emerald-600"
-      : tone === "negative"
-        ? "text-rose-600"
-        : "text-neutral-500";
-
-  return (
-    <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-      <div className="flex items-center gap-4">
-        <div className={`flex size-14 items-center justify-center rounded-2xl ${accent}`}>
-          {icon}
-        </div>
-        <div>
-          <p className="text-sm font-medium text-neutral-500">{subtitle}</p>
-          <p className={`mt-2 text-[1.75rem] font-semibold tracking-tight ${valueClass}`}>
-            {title}
-          </p>
-          {detail ? <p className={`mt-2 text-sm ${detailClass}`}>{detail}</p> : null}
-        </div>
+          ) : (
+            <p className="py-12 text-center text-sm text-ink-3">
+              {historyState === "error" ? "NAV history isn't available for this fund yet." : "Not enough NAV history yet."}
+            </p>
+          )}
+        </Card>
       </div>
-    </section>
+
+      <Card className="mt-4" id="holdings">
+        <CardHeader title="Holdings" subtitle="Tap a column to sort" />
+        <DataTable
+          rows={holdings}
+          getRowKey={(row) => String(row.schemeCode)}
+          initialSort={{ key: "value", direction: "desc" }}
+          empty={<p className="py-8 text-center text-sm text-ink-3">No active holdings. Add a purchase to get started.</p>}
+          columns={holdingColumns(currency, (code) => openSheet("sell", code), (code) => openSheet("buy", code))}
+        />
+      </Card>
+
+      <Card className="mt-4">
+        <CardHeader title="Transactions" subtitle={`${data.recentTransactions.length} in total`} />
+        <DataTable
+          rows={data.recentTransactions}
+          getRowKey={(row) => row.id}
+          pageSize={15}
+          initialSort={{ key: "date", direction: "desc" }}
+          empty={<p className="py-8 text-center text-sm text-ink-3">No transactions yet.</p>}
+          columns={transactionColumns(currency, setToDelete)}
+        />
+      </Card>
+
+      {tradeSheets}
+    </Page>
   );
 }
 
-function MetricChip({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  tone?: "positive" | "negative" | "neutral";
-}) {
-  const valueClass =
-    tone === "positive"
-      ? "text-emerald-600"
-      : tone === "negative"
-        ? "text-rose-600"
-        : "text-neutral-950";
-
-  return (
-    <div className="rounded-[1.2rem] border border-white/70 bg-white px-4 py-3 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-500">
-        {label}
-      </p>
-      <p className={`mt-2 text-base font-semibold ${valueClass}`}>{value}</p>
-    </div>
-  );
-}
-
-function ModalFrame({
-  title,
-  description,
-  children,
-  onClose,
-  maxWidthClassName = "max-w-2xl",
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-  onClose: () => void;
-  maxWidthClassName?: string;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
-      <div
-        className={`w-full rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] ${maxWidthClassName}`}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-xl font-semibold tracking-tight text-neutral-950">{title}</h3>
-            <p className="mt-1 text-sm text-neutral-500">{description}</p>
-          </div>
-          <button
-            className="rounded-full px-3 py-1 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
-            onClick={onClose}
-            type="button"
-          >
-            Close
-          </button>
+function holdingColumns(
+  currency: string,
+  onSell: (code: number) => void,
+  onBuy: (code: number) => void
+): DataColumn<MutualFundHoldingSummary>[] {
+  return [
+    {
+      key: "scheme",
+      header: "Fund",
+      mobile: "title",
+      sortValue: (row) => row.schemeName,
+      cell: (row) => (
+        <div className="min-w-0 max-w-[22rem]">
+          <p className="truncate font-medium text-ink" title={row.schemeName}>{shortSchemeName(row.schemeName)}</p>
+          <p className="text-xs text-ink-3">{estimateFundCategory(row.schemeName)} · {formatPercent(row.allocationPct, { decimals: 1 })} of portfolio</p>
         </div>
-        {children}
-      </div>
-    </div>
-  );
+      ),
+    },
+    { key: "units", header: "Units", align: "right", mobile: "detail", sortValue: (row) => row.units, cell: (row) => <span className="tabular">{formatNumber(row.units, 3)}</span> },
+    { key: "avg", header: "Avg NAV", align: "right", mobile: "detail", sortValue: (row) => row.averageNav, cell: (row) => <span className="tabular">{formatMoney(row.averageNav, { currency, decimals: 2 })}</span> },
+    { key: "nav", header: "NAV", align: "right", mobile: "detail", sortValue: (row) => row.currentNav, cell: (row) => <span className="tabular">{formatMoney(row.currentNav, { currency, decimals: 2 })}</span> },
+    { key: "invested", header: "Invested", align: "right", mobile: "detail", sortValue: (row) => row.investedAmount, cell: (row) => <span className="tabular">{formatMoney(row.investedAmount, { currency, decimals: 0 })}</span> },
+    {
+      key: "value",
+      header: "Current value",
+      align: "right",
+      mobile: "value",
+      sortValue: (row) => row.currentValue,
+      cell: (row) => <span className="tabular font-medium text-ink">{formatMoney(row.currentValue, { currency, decimals: 0 })}</span>,
+    },
+    {
+      key: "day",
+      header: "1D",
+      align: "right",
+      mobile: "detail",
+      sortValue: (row) => row.dayChange ?? null,
+      cell: (row) => (row.dayChange != null ? <Delta value={row.dayChange} percent={row.dayChangePct} compact currency={currency} size="xs" /> : <span className="text-ink-3">—</span>),
+    },
+    {
+      key: "returns",
+      header: "Returns",
+      align: "right",
+      mobile: "valueSub",
+      sortValue: (row) => row.profitLossPct,
+      cell: (row) => <Delta value={row.profitLossAmount} percent={row.profitLossPct} compact currency={currency} size="xs" />,
+    },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      mobile: "hidden",
+      cell: (row) => (
+        <div className="flex justify-end gap-1.5">
+          <Button size="sm" onClick={() => onBuy(row.schemeCode)}>Buy</Button>
+          <Button size="sm" onClick={() => onSell(row.schemeCode)}>Sell</Button>
+        </div>
+      ),
+    },
+  ];
 }
 
-function ModalActions({
-  isSubmitting,
-  submitLabel,
-  submittingLabel,
-  onCancel,
-}: {
-  isSubmitting: boolean;
-  submitLabel: string;
-  submittingLabel: string;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="flex justify-end gap-3 pt-2">
-      <button
-        className="rounded-[1rem] border border-[#dbe2ee] px-4 py-2.5 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
-        onClick={onCancel}
-        type="button"
-      >
-        Cancel
-      </button>
-      <button
-        className="rounded-[1rem] bg-[#111111] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={isSubmitting}
-        type="submit"
-      >
-        {isSubmitting ? submittingLabel : submitLabel}
-      </button>
-    </div>
-  );
-}
-
-function createCurrencyFormatter(currencyCode: string) {
-  try {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: currencyCode || "USD",
-      maximumFractionDigits: 2,
-    });
-  } catch {
-    return new Intl.NumberFormat("en-IN", {
-      maximumFractionDigits: 2,
-    });
-  }
-}
-
-function compactCurrency(value: number, formatter: Intl.NumberFormat) {
-  if (Math.abs(value) >= 100000) {
-    return `${Math.round(value / 1000)}k`;
-  }
-
-  const parts = formatter.formatToParts(value);
-  const currency = parts.find((part) => part.type === "currency")?.value || "";
-
-  return `${currency}${Math.round(value)}`;
+function transactionColumns(
+  currency: string,
+  onDelete: (transaction: MutualFundTransactionSummary) => void
+): DataColumn<MutualFundTransactionSummary>[] {
+  return [
+    {
+      key: "scheme",
+      header: "Fund",
+      mobile: "title",
+      sortValue: (row) => row.schemeName,
+      cell: (row) => (
+        <div className="min-w-0 max-w-[22rem]">
+          <p className="truncate font-medium text-ink" title={row.schemeName}>{shortSchemeName(row.schemeName)}</p>
+        </div>
+      ),
+    },
+    {
+      key: "type",
+      header: "Type",
+      mobile: "subtitle",
+      sortValue: (row) => row.transactionType,
+      cell: (row) => <Badge tone={row.transactionType === "buy" ? "brand" : "warn"}>{row.transactionType === "buy" ? "Buy" : "Sell"}</Badge>,
+    },
+    { key: "date", header: "Date", mobile: "detail", sortValue: (row) => row.date, cell: (row) => <span className="tabular">{formatDate(row.date)}</span> },
+    { key: "units", header: "Units", align: "right", mobile: "detail", sortValue: (row) => row.units, cell: (row) => <span className="tabular">{formatNumber(row.units, 3)}</span> },
+    { key: "nav", header: "NAV", align: "right", mobile: "detail", sortValue: (row) => row.nav, cell: (row) => <span className="tabular">{formatMoney(row.nav, { currency, decimals: 2 })}</span> },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      mobile: "value",
+      sortValue: (row) => row.amount,
+      cell: (row) => <span className="tabular font-medium text-ink">{formatMoney(row.amount, { currency, decimals: 0 })}</span>,
+    },
+    {
+      key: "realised",
+      header: "Realised",
+      align: "right",
+      mobile: "valueSub",
+      sortValue: (row) => row.realizedProfitAmount ?? null,
+      cell: (row) =>
+        row.realizedProfitAmount != null ? (
+          <Delta value={row.realizedProfitAmount} percent={row.realizedProfitPct} compact currency={currency} size="xs" />
+        ) : (
+          <span className="text-ink-3">—</span>
+        ),
+    },
+    {
+      key: "delete",
+      header: "",
+      align: "right",
+      mobile: "hidden",
+      cell: (row) => (
+        <Button size="sm" variant="ghost" icon={Trash2} aria-label={`Delete ${row.transactionType} transaction`} onClick={() => onDelete(row)} />
+      ),
+    },
+  ];
 }

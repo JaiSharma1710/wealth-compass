@@ -24,6 +24,31 @@ vi.mock("@/lib/goals", () => ({
   getGoalsPageData: vi.fn(),
 }));
 
+vi.mock("@/lib/accounts", () => ({
+  getAccountsDashboard: vi.fn().mockResolvedValue({
+    assets: [],
+    liabilities: [],
+    totalAssets: 0,
+    totalAssetsInvested: 0,
+    totalLiabilities: 0,
+    totalMonthlyPayments: 0,
+    netValue: 0,
+  }),
+}));
+
+vi.mock("@/lib/expenses", () => ({
+  getExpenseDashboard: vi.fn().mockRejectedValue(new Error("no expenses")),
+}));
+
+vi.mock("@/lib/market-sync-status", () => ({
+  getMarketSyncStatus: vi.fn().mockResolvedValue({
+    lastSyncedAt: null,
+    syncedToday: false,
+    failedCount: 0,
+    failedItems: [],
+  }),
+}));
+
 vi.mock("@/lib/daily-values", () => ({
   getPortfolioHistoryFromDailyValues: vi.fn(),
   getTodayDateKey: vi.fn(() => "2026-05-30"),
@@ -31,7 +56,7 @@ vi.mock("@/lib/daily-values", () => ({
   upsertDailyValues: vi.fn(),
 }));
 
-import { createOrUpdateTodayPortfolioSnapshot, getDashboard, getPortfolioHistory } from "@/lib/dashboard";
+import { getDashboard, getPortfolioHistory, saveDailyPortfolioValuesForUser } from "@/lib/dashboard";
 import { getCashReserveDashboard } from "@/lib/cash-reserves";
 import { getPortfolioHistoryFromDailyValues, upsertDailyValues } from "@/lib/daily-values";
 import { getGoldDashboard } from "@/lib/gold";
@@ -80,6 +105,8 @@ function createStockDashboard() {
     sectorAllocation: [],
     topGainers: [],
     topLosers: [],
+    xirr: null,
+    cashFlows: [],
     transactions: [
       {
         id: "s1",
@@ -119,6 +146,11 @@ function createMutualFundDashboard() {
     totalProfitLossPct: 33.33,
     monthOverMonthChangeAmount: 10,
     monthOverMonthChangePct: 5,
+    xirr: null,
+    cashFlows: [],
+    totalDayChange: null,
+    totalDayChangePct: null,
+    lastUpdatedAt: null,
     months: [],
     distribution: [],
     topHoldings: [],
@@ -163,6 +195,8 @@ function createGoldDashboard() {
     totalProfitLossPct: 25,
     monthOverMonthChangeAmount: 2,
     monthOverMonthChangePct: 4,
+    xirr: null,
+    cashFlows: [],
     months: [],
     holdings: [
       {
@@ -215,6 +249,7 @@ function createCashDashboard() {
           amount: 70,
           entryType: "credit" as const,
           bank: "HDFC",
+          dateKey: "2026-05-27",
           note: "Emergency fund",
         },
       ],
@@ -241,6 +276,10 @@ function createGoalsPageData() {
       totalTargetAmount: 1000,
       averageProgressPct: 30,
       totalRemainingAmount: 700,
+      totalSavedAmount: 0,
+      overallProgressPct: 0,
+      totalRequiredMonthly: 0,
+      behindGoals: 0,
     },
     goals: [
       {
@@ -249,17 +288,17 @@ function createGoalsPageData() {
         note: "",
         targetAmount: 1000,
         targetDate: "2026-12-31T00:00:00.000Z",
-        assetType: "cash" as const,
-        assetTypeLabel: "Cash",
-        investmentId: "cash::HDFC",
-        investmentLabel: "HDFC",
-        investmentDetail: "Bank account",
+        links: [],
         currentValue: 300,
         fundedAmount: 300,
         remainingAmount: 700,
         progressPct: 30,
         isCompleted: false,
-        isLinkActive: true,
+        status: "on_track" as const,
+        monthsLeft: 7,
+        requiredMonthly: 100,
+        expectedPct: 30,
+        createdAt: "2026-05-01T00:00:00.000Z",
         updatedAt: "2026-05-29T00:00:00.000Z",
       },
     ],
@@ -287,6 +326,8 @@ describe("dashboard domain", () => {
         mutualFundsValue: 200,
         goldValue: 50,
         cashValue: 70,
+        otherAssetsValue: 0,
+        liabilitiesValue: 0,
       },
     ]);
   });
@@ -322,6 +363,7 @@ describe("dashboard domain", () => {
       "mutualFunds",
       "gold",
       "cash",
+      "otherAssets",
     ]);
   });
 
@@ -388,8 +430,12 @@ describe("dashboard domain", () => {
         totalGoals: 0,
         completedGoals: 0,
         totalTargetAmount: 0,
+        totalSavedAmount: 0,
         averageProgressPct: 0,
+        overallProgressPct: 0,
         totalRemainingAmount: 0,
+        totalRequiredMonthly: 0,
+        behindGoals: 0,
       },
       goals: [],
       assetGroups: [],
@@ -402,24 +448,15 @@ describe("dashboard domain", () => {
     expect(dashboard.recentActivity).toEqual([]);
   });
 
-  it("creates or updates today's snapshot using a unique user/date upsert", async () => {
-    await createOrUpdateTodayPortfolioSnapshot(mockUser.id, {
-      totalCurrentWorth: 420,
-      totalInvested: 340,
-      totalGainLoss: 80,
-      totalGainLossPercent: 23.53,
-      stocksValue: 100,
-      mutualFundsValue: 200,
-      goldValue: 50,
-      cashValue: 70,
-      goalsSavedValue: 300,
-    });
+  it("saves today's snapshot with net worth as the portfolio value", async () => {
+    await saveDailyPortfolioValuesForUser(mockUser.id);
 
     expect(upsertDailyValues).toHaveBeenCalledTimes(1);
     const [inputs] = vi.mocked(upsertDailyValues).mock.calls[0];
-    expect(inputs).toHaveLength(5);
+    expect(inputs).toHaveLength(7);
     expect(inputs.find((input) => input.scope === "portfolio")?.currentValue).toBe(420);
     expect(inputs.find((input) => input.assetType === "stock")?.currentValue).toBe(100);
+    expect(inputs.find((input) => input.assetType === "liability")?.currentValue).toBe(0);
   });
 
   it("filters history by range", async () => {
@@ -431,6 +468,8 @@ describe("dashboard domain", () => {
         mutualFundsValue: 190,
         goldValue: 50,
         cashValue: 70,
+        otherAssetsValue: 0,
+        liabilitiesValue: 0,
       },
       {
         date: "2026-05-30",
@@ -439,6 +478,8 @@ describe("dashboard domain", () => {
         mutualFundsValue: 200,
         goldValue: 50,
         cashValue: 70,
+        otherAssetsValue: 0,
+        liabilitiesValue: 0,
       },
     ]);
 

@@ -1,1002 +1,521 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { TooltipContentProps } from "recharts";
-import type { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
+import { useMemo, useState } from "react";
 import {
+  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
-  CircleAlert,
-  Landmark,
-  LoaderCircle,
+  CalendarClock,
+  CheckCircle2,
+  Pencil,
   Plus,
+  ReceiptText,
+  Search,
+  Target,
+  Trash2,
   Wallet,
-  X,
 } from "lucide-react";
-import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 
+import { buildSuggestions, ExpenseEntrySheet } from "@/components/expenses-entry-sheet";
+import { ColumnChart, RankedBars } from "@/components/ui/charts";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  EmptyState,
+  IconButton,
+  Page,
+  ProgressBar,
+  Segmented,
+  StatTile,
+} from "@/components/ui/kit";
+import { Field, Input, Select, Sheet } from "@/components/ui/sheet";
+import { EXPENSE_CATEGORIES, CREDIT_CATEGORIES } from "@/lib/expense-categories";
 import type {
   ExpenseDashboardData,
   ExpenseEntrySummary,
   ExpenseHistoryGranularity,
-  ExpenseWindowSummary,
 } from "@/lib/expenses.types";
+import { formatCompactMoney, formatDateTime, formatMoney, formatPercent, formatShortDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-type ExpensesViewProps = {
-  currencyCode: string;
-  initialData: ExpenseDashboardData;
-};
+const IST = "Asia/Kolkata";
+const PAGE_STEP = 25;
+const ALL_CATEGORIES = [...EXPENSE_CATEGORIES, ...CREDIT_CATEGORIES];
 
-type BudgetFormValues = {
-  amount: string;
-};
+function istDayKey(value: string | Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: IST }).format(new Date(value));
+}
 
-type EntryFormValues = {
-  amount: string;
-  note: string;
-  occurredAt: string;
-};
-
-export function ExpensesView({ currencyCode, initialData }: ExpensesViewProps) {
-  const [dashboardData, setDashboardData] = useState(initialData);
-  const [historyGranularity, setHistoryGranularity] = useState<ExpenseHistoryGranularity>("daily");
-  const [activeModal, setActiveModal] = useState<"budget" | "expense" | "credit" | null>(
-    initialData.budget.isRequired ? "budget" : null
-  );
-  const [isDashboardLoading, setIsDashboardLoading] = useState(false);
-  const [isBudgetSaving, setIsBudgetSaving] = useState(false);
-  const [isEntrySaving, setIsEntrySaving] = useState(false);
-  const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
-  const historyData = dashboardData.history[historyGranularity];
-  const budgetRequired = dashboardData.budget.isRequired;
-  const {
-    register: registerBudget,
-    handleSubmit: handleBudgetSubmit,
-    reset: resetBudget,
-    formState: { errors: budgetErrors },
-  } = useForm<BudgetFormValues>({
-    defaultValues: {
-      amount: dashboardData.budget.amount != null ? String(dashboardData.budget.amount) : "",
-    },
-  });
-  const {
-    register: registerEntry,
-    handleSubmit: handleEntrySubmit,
-    reset: resetEntry,
-    formState: { errors: entryErrors },
-  } = useForm<EntryFormValues>({
-    defaultValues: {
-      amount: "",
-      note: "",
-      occurredAt: dashboardData.defaultOccurredAt,
-    },
-  });
-
-  useEffect(() => {
-    resetBudget({
-      amount: dashboardData.budget.amount != null ? String(dashboardData.budget.amount) : "",
-    });
-  }, [dashboardData.budget.amount, resetBudget]);
-
-  async function loadDashboard(page: number) {
-    setIsDashboardLoading(true);
-
-    try {
-      const response = await fetch(`/api/expenses?page=${page}`, {
-        cache: "no-store",
-      });
-      const result = (await response.json().catch(() => null)) as
-        | { dashboard?: ExpenseDashboardData; message?: string }
-        | null;
-
-      if (!response.ok || !result?.dashboard) {
-        throw new Error(result?.message || "Unable to load expense tracker data.");
-      }
-
-      const dashboard = result.dashboard;
-
-      setDashboardData(dashboard);
-      setActiveModal((current) =>
-        dashboard.budget.isRequired ? "budget" : current === "budget" ? null : current
-      );
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Unable to load expense tracker data."
-      );
-    } finally {
-      setIsDashboardLoading(false);
-    }
-  }
-
-  async function onSaveBudget(values: BudgetFormValues) {
-    setIsBudgetSaving(true);
-
-    try {
-      const response = await fetch("/api/expenses/budget", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          amount: Number(values.amount),
-          startYear: dashboardData.cycle.startYear,
-          startMonth: dashboardData.cycle.startMonth,
-        }),
-      });
-      const result = (await response.json().catch(() => null)) as
-        | { dashboard?: ExpenseDashboardData; message?: string }
-        | null;
-
-      if (!response.ok || !result?.dashboard) {
-        throw new Error(result?.message || "Unable to save budget.");
-      }
-
-      setDashboardData(result.dashboard);
-      setActiveModal(null);
-      toast.success(result.message || "Budget saved.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save budget.");
-    } finally {
-      setIsBudgetSaving(false);
-    }
-  }
-
-  async function onSaveEntry(values: EntryFormValues) {
-    if (activeModal !== "expense" && activeModal !== "credit") {
-      return;
-    }
-
-    setIsEntrySaving(true);
-
-    try {
-      const response = await fetch("/api/expenses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          entryType: activeModal,
-          amount: Number(values.amount),
-          note: values.note,
-          occurredAt: values.occurredAt,
-        }),
-      });
-      const result = (await response.json().catch(() => null)) as
-        | { dashboard?: ExpenseDashboardData; message?: string }
-        | null;
-
-      if (!response.ok || !result?.dashboard) {
-        if (response.status === 400 && /budget/i.test(result?.message || "")) {
-          setActiveModal("budget");
-        }
-
-        throw new Error(result?.message || "Unable to save entry.");
-      }
-
-      setDashboardData(result.dashboard);
-      setActiveModal(null);
-      resetEntry({
-        amount: "",
-        note: "",
-        occurredAt: result.dashboard.defaultOccurredAt,
-      });
-      toast.success(result.message || "Entry saved.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Unable to save entry.");
-    } finally {
-      setIsEntrySaving(false);
-    }
-  }
-
-  function openEntryModal(type: "expense" | "credit") {
-    if (dashboardData.budget.isRequired) {
-      setActiveModal("budget");
-      return;
-    }
-
-    resetEntry({
-      amount: "",
-      note: "",
-      occurredAt: dashboardData.defaultOccurredAt,
-    });
-    setActiveModal(type);
-  }
-
-  function closeModal() {
-    setActiveModal(null);
-  }
-
-  const rangeStart = dashboardData.entriesPage.totalCount
-    ? (dashboardData.entriesPage.page - 1) * dashboardData.entriesPage.pageSize + 1
-    : 0;
-  const rangeEnd = dashboardData.entriesPage.totalCount
-    ? rangeStart + dashboardData.entriesPage.entries.length - 1
-    : 0;
-
-  return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
-      <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
-        {budgetRequired ? (
-          <section className="rounded-[1.75rem] border border-[#f4d6a0] bg-[#fff8eb] p-4 shadow-sm">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <CircleAlert className="mt-0.5 size-5 shrink-0 text-[#8a6120]" />
-                <div>
-                  <h2 className="text-base font-semibold text-[#7f5618]">
-                    Budget required for this cycle
-                  </h2>
-                  <p className="mt-1 text-sm text-[#8a6120]">
-                    Set the budget for {dashboardData.cycle.label} before adding any new expense or
-                    credit. This cycle runs from {formatDateOnly(dashboardData.cycle.startDate)} to{" "}
-                    {formatDateOnly(dashboardData.cycle.endDate)}.
-                  </p>
-                </div>
-              </div>
-              <button
-                className="inline-flex items-center justify-center rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                onClick={() => setActiveModal("budget")}
-                type="button"
-              >
-                Set cycle budget
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr_1fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-sm font-medium text-neutral-500">Current Cycle Budget</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
-                  {dashboardData.budget.amount != null
-                    ? formatter.format(dashboardData.budget.amount)
-                    : "Not set"}
-                </h2>
-                <p className="mt-2 text-sm text-neutral-500">
-                  {dashboardData.cycle.label} cycle • {formatDateOnly(dashboardData.cycle.startDate)} to{" "}
-                  {formatDateOnly(dashboardData.cycle.endDate)}
-                </p>
-                <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#eef6ff] px-3 py-1 text-sm font-medium text-[#23569a]">
-                  <Wallet className="size-4" />
-                  <span>{dashboardData.cycle.elapsedDays}</span>
-                  <span className="text-current/75">days elapsed in this cycle</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={budgetRequired}
-                  onClick={() => openEntryModal("expense")}
-                  type="button"
-                >
-                  <Plus className="size-4" />
-                  <span>Add Expense</span>
-                </button>
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={budgetRequired}
-                  onClick={() => openEntryModal("credit")}
-                  type="button"
-                >
-                  <Plus className="size-4" />
-                  <span>Add Credit</span>
-                </button>
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#dbe2ee] bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition hover:bg-neutral-50"
-                  onClick={() => setActiveModal("budget")}
-                  type="button"
-                >
-                  <Landmark className="size-4" />
-                  <span>{dashboardData.budget.hasBudget ? "Update Budget" : "Set Budget"}</span>
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <MetricCard
-            accent={dashboardData.cycleSummary.expenseTotal > 0 ? "negative" : "neutral"}
-            label="Cycle Spend"
-            value={formatter.format(dashboardData.cycleSummary.expenseTotal)}
-          />
-          <MetricCard
-            accent={
-              dashboardData.health.remainingBudget != null && dashboardData.health.remainingBudget < 0
-                ? "negative"
-                : "positive"
-            }
-            label="Remaining Budget"
-            value={
-              dashboardData.health.remainingBudget != null
-                ? formatSignedCurrency(dashboardData.health.remainingBudget, formatter)
-                : "Set budget"
-            }
-          />
-        </div>
-
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                Budget Health
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Based on the remaining cycle budget and your current daily burn pace.
-              </p>
-            </div>
-            <HealthPill dashboardData={dashboardData} formatter={formatter} />
-          </div>
-
-          {dashboardData.health.status === "needs_budget" ? (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[#d9e3f0] bg-[#f8fbff] p-6 text-center">
-              <p className="text-sm font-semibold text-[#203553]">Set this cycle budget first</p>
-              <p className="mt-2 text-sm text-[#70819a]">
-                Once the budget is saved, we&apos;ll calculate your projected cycle spend, expected
-                daily allowance, and whether you&apos;re pacing above or below it.
-              </p>
-            </div>
-          ) : (
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <MetricCard
-                accent="neutral"
-                label="Avg Daily Expense"
-                value={formatter.format(dashboardData.health.averageDailyExpense)}
-              />
-              <MetricCard
-                accent="neutral"
-                label="Expected Daily Expense"
-                value={
-                  dashboardData.health.expectedDailyExpense != null
-                    ? formatter.format(dashboardData.health.expectedDailyExpense)
-                    : "Unavailable"
-                }
-              />
-              <MetricCard
-                accent={
-                  dashboardData.health.status === "over_budget" ? "negative" : "positive"
-                }
-                label="Projected Cycle Spend"
-                value={formatter.format(dashboardData.health.projectedCycleSpend)}
-              />
-              <MetricCard
-                accent={
-                  dashboardData.health.status === "over_budget" ||
-                  dashboardData.health.isOverExpectedDaily
-                    ? "negative"
-                    : "positive"
-                }
-                label="Pace Check"
-                value={
-                  dashboardData.health.status === "over_budget"
-                    ? `Over by ${formatter.format(dashboardData.health.overshootAmount)}`
-                    : dashboardData.health.isOverExpectedDaily
-                      ? "Above target"
-                      : "Below target"
-                }
-              />
-            </div>
-          )}
-        </section>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <WindowSummaryCard formatter={formatter} summary={dashboardData.todaySummary} />
-          <WindowSummaryCard formatter={formatter} summary={dashboardData.weekSummary} />
-          <WindowSummaryCard formatter={formatter} summary={dashboardData.cycleSummary} />
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                  Spend History
-                </h3>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Toggle daily, weekly, and cycle-month views.
-                </p>
-              </div>
-
-              <div className="inline-flex rounded-2xl border border-[#dbe2ee] bg-[#f7f9fc] p-1">
-                {(["daily", "weekly", "monthly"] as ExpenseHistoryGranularity[]).map((value) => (
-                  <button
-                    key={value}
-                    className={`rounded-xl px-3 py-2 text-sm font-medium transition ${
-                      historyGranularity === value
-                        ? "bg-white text-neutral-950 shadow-sm"
-                        : "text-neutral-500 hover:text-neutral-800"
-                    }`}
-                    onClick={() => setHistoryGranularity(value)}
-                    type="button"
-                  >
-                    {value.charAt(0).toUpperCase() + value.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {historyData.length ? (
-              <div className="mt-6 h-[18rem]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={historyData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke="#e7edf5" strokeDasharray="4 4" vertical={false} />
-                    <XAxis
-                      axisLine={false}
-                      dataKey="label"
-                      tick={{ fill: "#8693a8", fontSize: 12 }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tick={{ fill: "#8693a8", fontSize: 12 }}
-                      tickFormatter={(value: number) => compactCurrency(value)}
-                      tickLine={false}
-                    />
-                    <Tooltip
-                      content={(props) => (
-                        <ExpenseHistoryTooltip {...props} currencyFormatter={formatter} />
-                      )}
-                    />
-                    <Bar dataKey="expenseTotal" fill="#ef4444" name="expenseTotal" radius={[8, 8, 0, 0]} />
-                    <Bar dataKey="creditTotal" fill="#16a34a" name="creditTotal" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="mt-6 rounded-[1.5rem] border border-dashed border-[#d9e3f0] bg-[#f8fbff] p-6 text-center text-sm text-[#70819a]">
-                Add your first entry to start building spend history.
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Cycle Snapshot</h3>
-            <p className="mt-1 text-sm text-neutral-500">
-              Quick signals for how the current 5th-to-4th cycle is tracking.
-            </p>
-
-            <div className="mt-6 space-y-4">
-              <InsightRow
-                label="Cycle expenses"
-                value={formatter.format(dashboardData.cycleSummary.expenseTotal)}
-                tone="negative"
-              />
-              <InsightRow
-                label="Cycle credits"
-                value={formatter.format(dashboardData.cycleSummary.creditTotal)}
-                tone="positive"
-              />
-              <InsightRow
-                label="Net cash movement"
-                value={formatSignedCurrency(dashboardData.cycleSummary.netTotal, formatter)}
-                tone={dashboardData.cycleSummary.netTotal >= 0 ? "positive" : "negative"}
-              />
-              <InsightRow
-                label="Days left in cycle"
-                value={String(dashboardData.cycle.remainingDaysIncludingToday)}
-                tone="neutral"
-              />
-            </div>
-          </section>
-        </div>
-
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">
-                Recent Entries
-              </h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Showing {rangeStart}-{rangeEnd} of {dashboardData.entriesPage.totalCount} entries.
-              </p>
-            </div>
-            {isDashboardLoading ? (
-              <div className="inline-flex items-center gap-2 text-sm text-neutral-500">
-                <LoaderCircle className="size-4 animate-spin" />
-                Loading
-              </div>
-            ) : null}
-          </div>
-
-          {dashboardData.entriesPage.entries.length ? (
-            <>
-              <div className="mt-6 grid gap-3 md:hidden">
-                {dashboardData.entriesPage.entries.map((entry) => (
-                  <EntryCard key={entry.id} entry={entry} formatter={formatter} />
-                ))}
-              </div>
-
-              <div className="mt-6 hidden overflow-x-auto md:block">
-                <table className="min-w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#e6ebf2] text-left text-[#70819a]">
-                      <th className="pb-3 pr-4 font-medium">Type</th>
-                      <th className="pb-3 pr-4 font-medium">Amount</th>
-                      <th className="pb-3 pr-4 font-medium">Date & Time</th>
-                      <th className="pb-3 font-medium">Note</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dashboardData.entriesPage.entries.map((entry) => (
-                      <tr key={entry.id} className="border-b border-[#edf2f8] align-top last:border-b-0">
-                        <td className="py-4 pr-4">
-                          <EntryTypePill entryType={entry.entryType} />
-                        </td>
-                        <td className="py-4 pr-4 font-semibold text-neutral-950">
-                          {formatter.format(entry.amount)}
-                        </td>
-                        <td className="py-4 pr-4 text-neutral-600">{formatDateTime(entry.occurredAt)}</td>
-                        <td className="py-4 text-neutral-600">
-                          {entry.note ? entry.note : <span className="text-neutral-400">No note</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {dashboardData.entriesPage.totalPages > 1 ? (
-                <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-neutral-500">
-                    Page {dashboardData.entriesPage.page} of {dashboardData.entriesPage.totalPages}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="rounded-2xl border border-[#dbe2ee] px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={dashboardData.entriesPage.page === 1 || isDashboardLoading}
-                      onClick={() => void loadDashboard(dashboardData.entriesPage.page - 1)}
-                      type="button"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      className="rounded-2xl border border-[#dbe2ee] px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      disabled={
-                        dashboardData.entriesPage.page === dashboardData.entriesPage.totalPages ||
-                        isDashboardLoading
-                      }
-                      onClick={() => void loadDashboard(dashboardData.entriesPage.page + 1)}
-                      type="button"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="mt-6 rounded-[1.5rem] border border-dashed border-[#d9e3f0] bg-[#f8fbff] p-6 text-center text-sm text-[#70819a]">
-              No expense or credit entries yet.
-            </div>
-          )}
-        </section>
-      </div>
-
-      {activeModal === "budget" ? (
-        <ModalFrame
-          title={`Set Budget • ${dashboardData.cycle.label}`}
-          onClose={budgetRequired ? undefined : closeModal}
-        >
-          <form className="space-y-5" onSubmit={handleBudgetSubmit(onSaveBudget)}>
-            <div className="rounded-2xl border border-[#e6ebf2] bg-[#f8fbff] px-4 py-3 text-sm text-[#607089]">
-              This budget will cover {formatDateOnly(dashboardData.cycle.startDate)} to{" "}
-              {formatDateOnly(dashboardData.cycle.endDate)}.
-            </div>
-            <Field error={budgetErrors.amount?.message} label="Cycle Budget">
-              <input
-                {...registerBudget("amount", {
-                  required: "Budget amount is required.",
-                  validate: (value) =>
-                    Number(value) > 0 || "Budget amount must be greater than zero.",
-                })}
-                className={inputClassName}
-                inputMode="decimal"
-                placeholder="0.00"
-                type="number"
-              />
-            </Field>
-            <ModalActions
-              isSubmitting={isBudgetSaving}
-              onCancel={budgetRequired ? undefined : closeModal}
-              submitLabel="Save Budget"
-            />
-          </form>
-        </ModalFrame>
-      ) : null}
-
-      {activeModal === "expense" || activeModal === "credit" ? (
-        <ModalFrame
-          title={activeModal === "expense" ? "Add Expense" : "Add Credit"}
-          onClose={closeModal}
-        >
-          <form className="space-y-5" onSubmit={handleEntrySubmit(onSaveEntry)}>
-            <Field error={entryErrors.amount?.message} label="Amount">
-              <input
-                {...registerEntry("amount", {
-                  required: "Amount is required.",
-                  validate: (value) => Number(value) > 0 || "Amount must be greater than zero.",
-                })}
-                className={inputClassName}
-                inputMode="decimal"
-                placeholder="0.00"
-                type="number"
-              />
-            </Field>
-            <Field error={entryErrors.occurredAt?.message} label="Date & Time (IST)">
-              <input
-                {...registerEntry("occurredAt", {
-                  required: "Date and time are required.",
-                })}
-                className={inputClassName}
-                type="datetime-local"
-              />
-            </Field>
-            <Field error={entryErrors.note?.message} label="Note">
-              <textarea
-                {...registerEntry("note", {
-                  maxLength: {
-                    value: 500,
-                    message: "Note must be 500 characters or fewer.",
-                  },
-                })}
-                className={`${inputClassName} min-h-28 resize-none`}
-                placeholder="Optional note"
-              />
-            </Field>
-            <ModalActions
-              isSubmitting={isEntrySaving}
-              onCancel={closeModal}
-              submitLabel={activeModal === "expense" ? "Save Expense" : "Save Credit"}
-            />
-          </form>
-        </ModalFrame>
-      ) : null}
-    </div>
+function dayHeading(key: string, todayKey: string, yesterdayKey: string) {
+  if (key === todayKey) return "Today";
+  if (key === yesterdayKey) return "Yesterday";
+  return new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: IST }).format(
+    new Date(`${key}T12:00:00+05:30`)
   );
 }
 
-function MetricCard({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: "positive" | "negative" | "neutral";
-}) {
-  const accentClass =
-    accent === "positive"
-      ? "text-[#15803d] bg-[#edf9f0]"
-      : accent === "negative"
-        ? "text-[#b91c1c] bg-[#fff1f2]"
-        : "text-[#1f3b63] bg-[#eff5ff]";
-
-  return (
-    <div className="rounded-[1.75rem] border border-[#e6ebf2] bg-white p-5 shadow-sm">
-      <div className={`inline-flex rounded-2xl px-3 py-2 text-sm font-semibold ${accentClass}`}>
-        {label}
-      </div>
-      <p
-        className={`mt-4 text-3xl font-semibold tracking-tight ${
-          accent === "positive"
-            ? "text-[#15803d]"
-            : accent === "negative"
-              ? "text-[#b91c1c]"
-              : "text-neutral-950"
-        }`}
-      >
-        {value}
-      </p>
-    </div>
-  );
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit", timeZone: IST }).format(new Date(value));
 }
 
-function WindowSummaryCard({
-  summary,
-  formatter,
-}: {
-  summary: ExpenseWindowSummary;
-  formatter: Intl.NumberFormat;
-}) {
-  return (
-    <section className="rounded-[1.75rem] border border-[#e6ebf2] bg-white p-5 shadow-sm">
-      <h3 className="text-lg font-semibold tracking-tight text-neutral-950">{summary.label}</h3>
-      <div className="mt-5 grid gap-3">
-        <SummaryLine label="Expenses" tone="negative" value={formatter.format(summary.expenseTotal)} />
-        <SummaryLine label="Credits" tone="positive" value={formatter.format(summary.creditTotal)} />
-        <SummaryLine
-          label="Net"
-          tone={summary.netTotal >= 0 ? "positive" : "negative"}
-          value={formatSignedCurrency(summary.netTotal, formatter)}
-        />
-        <SummaryLine label="Entries" tone="neutral" value={String(summary.entryCount)} />
-      </div>
-    </section>
-  );
-}
-
-function SummaryLine({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "positive" | "negative" | "neutral";
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#f8fafc] px-4 py-3">
-      <span className="text-sm text-neutral-500">{label}</span>
-      <span
-        className={`text-sm font-semibold ${
-          tone === "positive"
-            ? "text-[#15803d]"
-            : tone === "negative"
-              ? "text-[#b91c1c]"
-              : "text-neutral-950"
-        }`}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function InsightRow({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "positive" | "negative" | "neutral";
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-[1.35rem] border border-[#eef2f7] bg-[#fafcff] px-4 py-3">
-      <span className="text-sm text-neutral-500">{label}</span>
-      <span
-        className={`text-sm font-semibold ${
-          tone === "positive"
-            ? "text-[#15803d]"
-            : tone === "negative"
-              ? "text-[#b91c1c]"
-              : "text-neutral-950"
-        }`}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function HealthPill({
-  dashboardData,
-  formatter,
-}: {
-  dashboardData: ExpenseDashboardData;
-  formatter: Intl.NumberFormat;
-}) {
-  if (dashboardData.health.status === "needs_budget") {
-    return (
-      <div className="inline-flex items-center gap-2 rounded-full bg-[#fff8eb] px-3 py-1.5 text-sm font-medium text-[#8a6120]">
-        <CircleAlert className="size-4" />
-        <span>Budget needed to calculate health</span>
-      </div>
-    );
-  }
-
-  if (dashboardData.health.status === "over_budget") {
-    return (
-      <div className="inline-flex items-center gap-2 rounded-full bg-[#fff1f2] px-3 py-1.5 text-sm font-medium text-[#b91c1c]">
-        <ArrowDownRight className="size-4" />
-        <span>Projected overshoot: {formatter.format(dashboardData.health.overshootAmount)}</span>
-      </div>
-    );
-  }
-
-  if (dashboardData.health.status === "over_pace") {
-    return (
-      <div className="inline-flex items-center gap-2 rounded-full bg-[#fff8eb] px-3 py-1.5 text-sm font-medium text-[#8a6120]">
-        <ArrowUpRight className="size-4" />
-        <span>Daily spend is above target pace</span>
-      </div>
-    );
-  }
+/** Spending change: arrow follows the direction of spend, colour is inverted (less spend = good). */
+function SpendDelta({ current, previous, suffix }: { current: number; previous: number; suffix?: string }) {
+  if (previous <= 0) return <span className="text-xs text-ink-3">No earlier data</span>;
+  const diff = current - previous;
+  const percent = (diff / previous) * 100;
+  const flat = Math.abs(percent) < 0.5;
+  const Icon = diff > 0 ? ArrowUpRight : ArrowDownRight;
 
   return (
-    <div className="inline-flex items-center gap-2 rounded-full bg-[#edf9f0] px-3 py-1.5 text-sm font-medium text-[#15803d]">
-      <ArrowUpRight className="size-4" />
-      <span>On track to stay within budget</span>
-    </div>
-  );
-}
-
-function EntryTypePill({ entryType }: { entryType: ExpenseEntrySummary["entryType"] }) {
-  return (
-    <span
-      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${
-        entryType === "credit"
-          ? "bg-[#edf9f0] text-[#15803d]"
-          : "bg-[#fff1f2] text-[#b91c1c]"
-      }`}
-    >
-      {entryType}
+    <span className={cn("tabular inline-flex items-center gap-0.5 text-sm font-medium", flat ? "text-ink-3" : diff > 0 ? "text-loss" : "text-gain")}>
+      {flat ? null : <Icon className="size-3.5" aria-hidden />}
+      {flat ? "Same" : formatPercent(Math.abs(percent), { decimals: 0 })}
+      {suffix ? <span className="ml-1 font-normal text-ink-3">{suffix}</span> : null}
     </span>
   );
 }
 
-function ExpenseHistoryTooltip({
-  active,
-  payload,
-  label,
-  currencyFormatter,
-}: TooltipContentProps<ValueType, NameType> & { currencyFormatter: Intl.NumberFormat }) {
-  if (!active || !payload?.length) {
-    return null;
+export function ExpensesView({ initialData, currencyCode }: { initialData: ExpenseDashboardData; currencyCode: string }) {
+  const currency = currencyCode || "INR";
+  const [data, setData] = useState(initialData);
+  const [seen, setSeen] = useState(initialData);
+
+  if (seen !== initialData) {
+    setSeen(initialData);
+    setData(initialData);
+  }
+
+  const [sheet, setSheet] = useState<{ open: boolean; entry: ExpenseEntrySummary | null }>({ open: false, entry: null });
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [deleting, setDeleting] = useState<ExpenseEntrySummary | null>(null);
+  const [granularity, setGranularity] = useState<ExpenseHistoryGranularity>("daily");
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "expense" | "credit">("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [visible, setVisible] = useState(PAGE_STEP);
+
+  const { cycle, budget, health, cycleSummary, previousCycleSummary } = data;
+  const budgetAmount = budget.amount ?? 0;
+  const spent = cycleSummary.expenseTotal;
+  const usedPct = budgetAmount > 0 ? (spent / budgetAmount) * 100 : 0;
+  const barTone = !budget.hasBudget ? "brand" : health.status === "over_budget" && usedPct >= 100 ? "loss" : health.status === "on_track" ? "brand" : "warn";
+  const remaining = health.remainingBudget;
+  const safeDaily = health.expectedDailyExpense != null ? Math.max(health.expectedDailyExpense, 0) : null;
+  const suggestions = useMemo(() => buildSuggestions(data.recentEntries), [data.recentEntries]);
+  const statusBadge =
+    health.status === "on_track"
+      ? { tone: "gain" as const, label: "On track", Icon: CheckCircle2 }
+      : health.status === "over_pace"
+        ? { tone: "warn" as const, label: "Spending fast", Icon: AlertTriangle }
+        : health.status === "over_budget"
+          ? { tone: "loss" as const, label: "Heading over budget", Icon: AlertTriangle }
+          : { tone: "neutral" as const, label: "Set a budget", Icon: Target };
+
+  const history = useMemo(
+    () =>
+      data.history[granularity].map((point) => ({
+        label: granularity === "weekly" ? formatShortDate(point.key) : point.label,
+        spend: point.expenseTotal,
+      })),
+    [data.history, granularity]
+  );
+  const historyAvg = history.length ? history.reduce((sum, point) => sum + point.spend, 0) / history.length : 0;
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+
+    return data.recentEntries.filter(
+      (entry) =>
+        (typeFilter === "all" || entry.entryType === typeFilter) &&
+        (categoryFilter === "all" || entry.category === categoryFilter) &&
+        (!needle || `${entry.note} ${entry.categoryLabel} ${entry.amount}`.toLowerCase().includes(needle))
+    );
+  }, [data.recentEntries, query, typeFilter, categoryFilter]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, ExpenseEntrySummary[]>();
+
+    for (const entry of filtered.slice(0, visible)) {
+      const key = istDayKey(entry.occurredAt);
+      map.set(key, [...(map.get(key) || []), entry]);
+    }
+
+    return [...map.entries()];
+  }, [filtered, visible]);
+
+  const todayKey = istDayKey(new Date());
+  const yesterdayKey = istDayKey(new Date(new Date(`${todayKey}T12:00:00+05:30`).getTime() - 86400000));
+  const filtersActive = Boolean(query) || typeFilter !== "all" || categoryFilter !== "all";
+
+  function openAdd() {
+    setSheet({ open: true, entry: null });
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    const target = deleting;
+
+    try {
+      const response = await fetch(`/api/expenses/${target.id}`, { method: "DELETE" });
+      const result = (await response.json().catch(() => ({}))) as { message?: string; dashboard?: ExpenseDashboardData };
+
+      if (!response.ok || !result.dashboard) throw new Error(result.message || "Unable to delete entry.");
+      setData(result.dashboard);
+      toast.success("Entry deleted.");
+      setDeleting(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete entry.");
+    }
   }
 
   return (
-    <div className="rounded-2xl border border-[#e6ebf2] bg-white px-4 py-3 shadow-lg">
-      <p className="text-sm font-semibold text-neutral-950">{String(label || "")}</p>
-      <div className="mt-2 space-y-1.5 text-sm">
-        {payload.map((item) => (
-          <div key={String(item.dataKey)} className="flex items-center justify-between gap-4">
-            <span className="text-neutral-500">
-              {item.dataKey === "expenseTotal" ? "Expenses" : "Credits"}
-            </span>
-            <span className="font-semibold text-neutral-950">
-              {currencyFormatter.format(Number(item.value || 0))}
-            </span>
+    <Page>
+      {/* Hero */}
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink-3">Spent this cycle · {cycle.label}</p>
+            <p className="tabular mt-1 text-[2.1rem] leading-tight font-semibold tracking-tight text-ink sm:text-[2.6rem]">
+              {formatMoney(spent, { currency, decimals: 0 })}
+              {budget.hasBudget ? (
+                <span className="ml-2 text-base font-medium text-ink-3 sm:text-lg">of {formatMoney(budgetAmount, { currency, decimals: 0 })}</span>
+              ) : null}
+            </p>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EntryCard({
-  entry,
-  formatter,
-}: {
-  entry: ExpenseEntrySummary;
-  formatter: Intl.NumberFormat;
-}) {
-  return (
-    <div className="rounded-[1.5rem] border border-[#e6ebf2] bg-[#fcfdff] p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <EntryTypePill entryType={entry.entryType} />
-        <div
-          className={`text-right text-base font-semibold ${
-            entry.entryType === "credit" ? "text-[#15803d]" : "text-[#b91c1c]"
-          }`}
-        >
-          {formatter.format(entry.amount)}
+          <div className="flex items-center gap-2">
+            <Badge tone={statusBadge.tone}>
+              <statusBadge.Icon className="size-3" aria-hidden />
+              {statusBadge.label}
+            </Badge>
+            <Button size="sm" icon={Target} onClick={() => setBudgetOpen(true)}>{budget.hasBudget ? "Edit budget" : "Set budget"}</Button>
+            <Button size="sm" variant="primary" icon={Plus} onClick={openAdd} className="hidden sm:inline-flex">Add expense</Button>
+          </div>
         </div>
+
+        {budget.hasBudget ? (
+          <>
+            <ProgressBar value={usedPct} tone={barTone} className="mt-4 h-2.5" label="Budget used" />
+            <div className="mt-1.5 flex justify-between text-xs text-ink-3">
+              <span>{formatPercent(usedPct, { decimals: 0 })} used</span>
+              <span>{cycle.elapsedDays}/{cycle.totalDays} days elapsed</span>
+            </div>
+          </>
+        ) : (
+          <p className="mt-3 rounded-xl bg-warn-soft px-3 py-2 text-sm text-warn">Set a budget for this cycle to see your safe daily spend and projection.</p>
+        )}
+
+        <dl className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <HeroStat
+            label={remaining != null && remaining < 0 ? "Over budget by" : "Left to spend"}
+            value={remaining == null ? "—" : formatMoney(Math.abs(remaining), { currency, decimals: 0 })}
+            tone={remaining != null && remaining < 0 ? "loss" : "ink"}
+          />
+          <HeroStat
+            label="Safe to spend / day"
+            value={safeDaily == null ? "—" : formatMoney(safeDaily, { currency, decimals: 0 })}
+            caption={`for ${cycle.remainingDaysIncludingToday} days left`}
+          />
+          <HeroStat
+            label="Projected by cycle end"
+            value={budget.hasBudget ? formatMoney(health.projectedCycleSpend, { currency, decimals: 0 }) : "—"}
+            caption={budget.hasBudget && health.overshootAmount > 0 ? `${formatCompactMoney(health.overshootAmount, { currency })} over budget` : budget.hasBudget ? "within budget" : undefined}
+            tone={health.overshootAmount > 0 ? "loss" : "ink"}
+          />
+          <div className="min-w-0 rounded-xl bg-surface-2 px-3 py-2.5">
+            <dt className="text-xs text-ink-3">Vs last cycle</dt>
+            <dd className="mt-1"><SpendDelta current={budget.hasBudget ? health.projectedCycleSpend : spent} previous={previousCycleSummary.expenseTotal} /></dd>
+            <p className="tabular mt-0.5 truncate text-xs text-ink-3">last: {formatMoney(previousCycleSummary.expenseTotal, { currency, decimals: 0 })}</p>
+          </div>
+        </dl>
+      </Card>
+
+      {/* KPI tiles */}
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile icon={Wallet} label="Today" value={formatMoney(data.todaySummary.expenseTotal, { currency, decimals: 0 })} caption={`${data.todaySummary.entryCount} entries`} />
+        <StatTile icon={CalendarClock} label="This week" value={formatMoney(data.weekSummary.expenseTotal, { currency, decimals: 0 })} caption={`${data.weekSummary.entryCount} entries`} />
+        <StatTile icon={ReceiptText} label="Avg per day" value={formatMoney(health.averageDailyExpense, { currency, decimals: 0 })} caption="this cycle" />
+        <StatTile
+          icon={Plus}
+          label="Credits this cycle"
+          value={formatMoney(cycleSummary.creditTotal, { currency, decimals: 0 })}
+          caption={cycleSummary.creditTotal > 0 ? `net ${formatMoney(cycleSummary.netTotal, { currency, decimals: 0 })}` : "refunds, cashback…"}
+        />
       </div>
-      <p className="mt-3 text-sm text-neutral-500">{formatDateTime(entry.occurredAt)}</p>
-      <p className="mt-2 text-sm text-neutral-700">{entry.note || "No note"}</p>
-    </div>
-  );
-}
 
-function Field({
-  label,
-  error,
-  children,
-}: {
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-sm font-medium text-neutral-800">{label}</span>
-      {children}
-      {error ? <span className="mt-2 block text-xs text-[#b91c1c]">{error}</span> : null}
-    </label>
-  );
-}
+      <div className="mt-4 grid gap-4 lg:grid-cols-5">
+        <Card className="lg:col-span-3">
+          <CardHeader
+            title="Spend history"
+            subtitle={`Average ${formatCompactMoney(historyAvg, { currency })} per ${granularity === "daily" ? "day" : granularity === "weekly" ? "week" : "cycle"}`}
+            action={
+              <Segmented
+                ariaLabel="History range"
+                value={granularity}
+                onChange={setGranularity}
+                options={[
+                  { value: "daily", label: "14 days" },
+                  { value: "weekly", label: "Weeks" },
+                  { value: "monthly", label: "Cycles" },
+                ]}
+              />
+            }
+          />
+          <ColumnChart
+            data={history}
+            xKey="label"
+            series={[{ key: "spend", label: "Spent", color: "var(--wc-asset-stocks)" }]}
+            currency={currency}
+            highlightIndex={history.length - 1}
+            height={230}
+          />
+          <p className="mt-2 text-xs text-ink-3">The current {granularity === "daily" ? "day" : granularity === "weekly" ? "week" : "cycle"} is highlighted.</p>
+        </Card>
 
-function ModalActions({
-  onCancel,
-  isSubmitting,
-  submitLabel,
-}: {
-  onCancel?: () => void;
-  isSubmitting: boolean;
-  submitLabel: string;
-}) {
-  return (
-    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-      {onCancel ? (
-        <button
-          className="rounded-2xl border border-[#dbe2ee] px-4 py-2.5 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
-          onClick={onCancel}
-          type="button"
-        >
-          Cancel
-        </button>
-      ) : null}
-      <button
-        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={isSubmitting}
-        type="submit"
-      >
-        {isSubmitting ? <LoaderCircle className="size-4 animate-spin" /> : null}
-        <span>{submitLabel}</span>
-      </button>
-    </div>
-  );
-}
+        <Card className="lg:col-span-2">
+          <CardHeader title="Where it went" subtitle="This cycle, vs last cycle" />
+          {data.categoryBreakdown.length ? (
+            <RankedBars
+              currency={currency}
+              items={data.categoryBreakdown.slice(0, 8).map((item) => {
+                const change = item.previousAmount > 0 ? ((item.amount - item.previousAmount) / item.previousAmount) * 100 : null;
 
-function ModalFrame({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-0 sm:items-center sm:p-4">
-      <div className="w-full rounded-t-[2rem] border border-[#e6ebf2] bg-white p-5 shadow-[0_28px_80px_rgba(15,23,42,0.18)] sm:max-w-lg sm:rounded-[2rem]">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <h2 className="text-xl font-semibold tracking-tight text-neutral-950">{title}</h2>
-          {onClose ? (
-            <button
-              aria-label="Close modal"
-              className="rounded-2xl border border-[#e6ebf2] p-2 text-neutral-500 transition hover:bg-neutral-50"
-              onClick={onClose}
-              type="button"
+                return {
+                  key: item.key,
+                  label: item.label,
+                  value: item.amount,
+                  caption: (
+                    <>
+                      {formatPercent(item.percentage, { decimals: 0 })}
+                      {change != null && Math.abs(change) >= 1 ? (
+                        <span className={cn("ml-1", change > 0 ? "text-loss" : "text-gain")}>
+                          {change > 0 ? "▲" : "▼"}{Math.abs(Math.round(change))}%
+                        </span>
+                      ) : null}
+                    </>
+                  ),
+                };
+              })}
+            />
+          ) : (
+            <EmptyState icon={ReceiptText} title="No spending yet" message="Categories appear as you add expenses." />
+          )}
+        </Card>
+      </div>
+
+      {/* Entries */}
+      <Card className="mt-4" padded={false}>
+        <div className="p-4 pb-0 sm:p-5 sm:pb-0">
+          <CardHeader
+            title="Entries"
+            subtitle={`${filtered.length}${filtersActive ? " matching" : ""} of ${data.entriesPage.totalCount}`}
+            action={<Button size="sm" icon={Plus} onClick={openAdd}>Add</Button>}
+          />
+          <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ink-3" aria-hidden />
+              <Input
+                value={query}
+                onChange={(event) => { setQuery(event.target.value); setVisible(PAGE_STEP); }}
+                placeholder="Search notes, e.g. cng"
+                aria-label="Search entries"
+                className="pl-9"
+              />
+            </div>
+            <Select
+              aria-label="Category filter"
+              value={categoryFilter}
+              onChange={(event) => { setCategoryFilter(event.target.value); setVisible(PAGE_STEP); }}
+              className="sm:w-48"
             >
-              <X className="size-4" />
-            </button>
-          ) : null}
+              <option value="all">All categories</option>
+              {ALL_CATEGORIES.map((category) => (
+                <option key={category.key} value={category.key}>{category.label}</option>
+              ))}
+            </Select>
+            <Segmented
+              ariaLabel="Entry type"
+              value={typeFilter}
+              onChange={(value) => { setTypeFilter(value); setVisible(PAGE_STEP); }}
+              options={[
+                { value: "all", label: "All" },
+                { value: "expense", label: "Expenses" },
+                { value: "credit", label: "Credits" },
+              ]}
+            />
+          </div>
         </div>
-        {children}
-      </div>
+
+        {groups.length === 0 ? (
+          <EmptyState
+            icon={ReceiptText}
+            title={filtersActive ? "Nothing matches" : "No entries yet"}
+            message={filtersActive ? "Try a different search or clear the filters." : "Log your first expense in a few taps."}
+            action={filtersActive ? <Button onClick={() => { setQuery(""); setTypeFilter("all"); setCategoryFilter("all"); }}>Clear filters</Button> : <Button variant="primary" icon={Plus} onClick={openAdd}>Add expense</Button>}
+          />
+        ) : (
+          <div>
+            {groups.map(([key, entries]) => {
+              const dayTotal = entries.reduce((sum, entry) => sum + (entry.entryType === "expense" ? entry.amount : 0), 0);
+
+              return (
+                <section key={key}>
+                  <div className="flex items-center justify-between gap-3 bg-surface-2 px-4 py-1.5 text-xs font-medium text-ink-3 sm:px-5">
+                    <span>{dayHeading(key, todayKey, yesterdayKey)}</span>
+                    {dayTotal > 0 ? <span className="tabular">{formatMoney(dayTotal, { currency, decimals: 0 })} spent</span> : null}
+                  </div>
+                  <ul className="divide-y divide-line">
+                    {entries.map((entry) => (
+                      <li key={entry.id} className="flex items-center gap-3 px-4 py-2.5 sm:px-5">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-ink">{entry.note || entry.categoryLabel}</p>
+                          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-ink-3">
+                            <Badge tone={entry.entryType === "credit" ? "gain" : "neutral"}>{entry.categoryLabel}</Badge>
+                            <span>{formatTime(entry.occurredAt)}</span>
+                          </p>
+                        </div>
+                        <p className={cn("tabular shrink-0 text-sm font-semibold", entry.entryType === "credit" ? "text-gain" : "text-ink")}>
+                          {entry.entryType === "credit" ? "+" : "−"}{formatMoney(entry.amount, { currency })}
+                        </p>
+                        <div className="flex shrink-0">
+                          <IconButton icon={Pencil} label="Edit entry" className="size-9" onClick={() => setSheet({ open: true, entry })} />
+                          <IconButton icon={Trash2} label="Delete entry" className="size-9 hover:text-loss" onClick={() => setDeleting(entry)} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+            <div className="flex flex-col items-center gap-2 border-t border-line p-4">
+              {filtered.length > visible ? (
+                <Button onClick={() => setVisible((count) => count + PAGE_STEP)}>Show more ({filtered.length - visible} left)</Button>
+              ) : null}
+              {data.recentEntriesTruncated && filtered.length <= visible ? (
+                <p className="text-xs text-ink-3">Showing your most recent {data.recentEntries.length} entries.</p>
+              ) : null}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Mobile FAB */}
+      <button
+        type="button"
+        onClick={openAdd}
+        aria-label="Add expense"
+        className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 flex h-14 items-center gap-2 rounded-full bg-cta px-5 text-sm font-semibold text-cta-ink shadow-lg transition active:scale-95 sm:hidden"
+      >
+        <Plus className="size-5" aria-hidden /> Add
+      </button>
+
+      <ExpenseEntrySheet
+        open={sheet.open}
+        entry={sheet.entry}
+        suggestions={suggestions}
+        currency={currency}
+        onClose={() => setSheet((current) => ({ ...current, open: false }))}
+        onSaved={setData}
+      />
+
+      <BudgetSheet
+        open={budgetOpen}
+        onClose={() => setBudgetOpen(false)}
+        data={data}
+        currency={currency}
+        onSaved={setData}
+      />
+
+      <Sheet
+        open={Boolean(deleting)}
+        onClose={() => setDeleting(null)}
+        title="Delete this entry?"
+        description={deleting ? `${deleting.note || deleting.categoryLabel} · ${formatMoney(deleting.amount, { currency })} · ${formatDateTime(deleting.occurredAt)}` : undefined}
+        size="sm"
+        footer={
+          <>
+            <Button onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="danger" icon={Trash2} onClick={confirmDelete}>Delete</Button>
+          </>
+        }
+      >
+        <p className="text-sm text-ink-2">This removes it from your totals and cannot be undone.</p>
+      </Sheet>
+    </Page>
+  );
+}
+
+function HeroStat({ label, value, caption, tone = "ink" }: { label: string; value: string; caption?: string; tone?: "ink" | "loss" }) {
+  return (
+    <div className="min-w-0 rounded-xl bg-surface-2 px-3 py-2.5">
+      <dt className="text-xs text-ink-3">{label}</dt>
+      <dd className={cn("tabular mt-1 truncate text-lg font-semibold", tone === "loss" ? "text-loss" : "text-ink")}>{value}</dd>
+      {caption ? <p className="mt-0.5 truncate text-xs text-ink-3">{caption}</p> : null}
     </div>
   );
 }
 
-function createCurrencyFormatter(currencyCode: string) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: currencyCode,
-    maximumFractionDigits: 2,
-  });
+function BudgetSheet({
+  open,
+  onClose,
+  data,
+  currency,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  data: ExpenseDashboardData;
+  currency: string;
+  onSaved: (dashboard: ExpenseDashboardData) => void;
+}) {
+  return (
+    <Sheet open={open} onClose={onClose} title="Cycle budget" description={`${data.cycle.label} · 5th to 4th`} size="sm">
+      <BudgetForm key={String(data.budget.amount)} data={data} currency={currency} onClose={onClose} onSaved={onSaved} />
+    </Sheet>
+  );
 }
 
-function formatSignedCurrency(value: number, formatter: Intl.NumberFormat) {
-  return value >= 0 ? formatter.format(value) : `(${formatter.format(Math.abs(value))})`;
-}
+function BudgetForm({ data, currency, onClose, onSaved }: { data: ExpenseDashboardData; currency: string; onClose: () => void; onSaved: (dashboard: ExpenseDashboardData) => void }) {
+  const [amount, setAmount] = useState(data.budget.amount ? String(data.budget.amount) : "");
+  const [saving, setSaving] = useState(false);
+  const parsed = Number(amount);
+  const valid = Number.isFinite(parsed) && parsed > 0;
 
-function compactCurrency(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
+  async function save() {
+    setSaving(true);
 
-function formatDateOnly(value: string) {
-  return new Intl.DateTimeFormat("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(value));
-}
+    try {
+      const response = await fetch("/api/expenses/budget", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: parsed }),
+      });
+      const result = (await response.json().catch(() => ({}))) as { message?: string; dashboard?: ExpenseDashboardData };
 
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(value));
-}
+      if (!response.ok || !result.dashboard) throw new Error(result.message || "Unable to save budget.");
+      toast.success("Budget saved.");
+      onSaved(result.dashboard);
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save budget.");
+      setSaving(false);
+    }
+  }
 
-const inputClassName =
-  "w-full rounded-2xl border border-[#d7e1f0] bg-white px-4 py-3 text-sm text-[#17304f] outline-none transition placeholder:text-[#96a1b5] focus:border-[#7fa7df] focus:ring-4 focus:ring-[#d9e9ff]";
+  return (
+    <form onSubmit={(event) => { event.preventDefault(); if (valid && !saving) void save(); }} className="space-y-4">
+      <Field label={`Budget for this cycle (${currency})`}>
+        <Input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} placeholder="13000" className="h-12 text-lg" />
+      </Field>
+      <p className="rounded-xl bg-surface-2 px-3 py-2 text-xs text-ink-3">
+        Your budget carries over automatically: every new cycle starts with the latest amount, so you only edit it when it changes.
+      </p>
+      <div className="flex gap-2">
+        <Button type="button" className="flex-1" onClick={onClose}>Cancel</Button>
+        <Button type="submit" variant="primary" className="flex-[2]" loading={saving} disabled={!valid}>Save budget</Button>
+      </div>
+    </form>
+  );
+}

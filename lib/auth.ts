@@ -15,7 +15,8 @@ if (!JWT_SECRET) {
 }
 
 const secret = new TextEncoder().encode(JWT_SECRET);
-const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7;
+// Long-lived so the installed iOS app doesn't sign out every week.
+const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 90;
 
 export const AUTH_COOKIE_NAME = "wealth-compass-token";
 

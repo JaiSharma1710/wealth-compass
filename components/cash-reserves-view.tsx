@@ -1,938 +1,459 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowDownRight, ArrowUpRight, Eye, Landmark, Plus, Wallet, X } from "lucide-react";
-import { useForm, useWatch } from "react-hook-form";
+import { ArrowDownLeft, ArrowUpRight, Landmark, Pencil, Plus } from "lucide-react";
 import toast from "react-hot-toast";
 
+import { CashEntrySheet, type CashEntrySubmit } from "@/components/cash-entry-sheet";
+import { AllocationBar, ColumnChart, SERIES_COLORS, TrendChart } from "@/components/ui/charts";
+import { type DataColumn, DataTable } from "@/components/ui/data-table";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Delta,
+  EmptyState,
+  Page,
+  Segmented,
+} from "@/components/ui/kit";
+import { Select } from "@/components/ui/sheet";
 import type {
   CashReserveDashboardData,
   CashReserveEntrySummary,
-  CashReserveEntryType,
-  CashReserveRecentActivityPage,
+  CashReserveMonthSummary,
 } from "@/lib/cash-reserves.types";
+import { formatCompactMoney, formatDate, formatMoney, formatRelativeTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-type CashReservesViewProps = {
+type Props = {
   banks: string[];
   currencyCode: string;
   initialData: CashReserveDashboardData;
 };
 
-type AddEntryValues = {
-  date: string;
-  amount: string;
-  bank: string;
-  entryType: CashReserveEntryType;
-  note: string;
-};
+function monthLabelOf(key: string) {
+  const [year, month] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en", { month: "short", year: "numeric" }).format(new Date(year, month - 1, 1));
+}
 
-type ActivityQueryState = {
-  page: number;
-  month: string;
-  year: string;
-  date: string;
-  entryType: CashReserveEntryType | "all";
-};
-
-const MONTH_FILTER_OPTIONS = [
-  { label: "Jan", value: "1" },
-  { label: "Feb", value: "2" },
-  { label: "Mar", value: "3" },
-  { label: "Apr", value: "4" },
-  { label: "May", value: "5" },
-  { label: "Jun", value: "6" },
-  { label: "Jul", value: "7" },
-  { label: "Aug", value: "8" },
-  { label: "Sep", value: "9" },
-  { label: "Oct", value: "10" },
-  { label: "Nov", value: "11" },
-  { label: "Dec", value: "12" },
-] as const;
-
-export function CashReservesView({ banks, currencyCode, initialData }: CashReservesViewProps) {
+export function CashReservesView({ banks, currencyCode, initialData }: Props) {
   const router = useRouter();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [noteEntry, setNoteEntry] = useState<CashReserveEntrySummary | null>(null);
-  const [isCompactTrendViewport, setIsCompactTrendViewport] = useState(false);
-  const [isPending, startTransition] = useTransition();
-  const bankOptions = useMemo(() => Array.from(new Set(banks.filter(Boolean))), [banks]);
-  const defaultBank = bankOptions[0] || "";
-  const [activityState, setActivityState] = useState<{
-    activity: CashReserveRecentActivityPage;
-    query: ActivityQueryState;
-  } | null>(null);
-  const [isActivityLoading, setIsActivityLoading] = useState(false);
-  const {
-    control,
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting, isDirty },
-  } = useForm<AddEntryValues>({
-    defaultValues: {
-      date: new Date().toISOString().slice(0, 10),
-      amount: "",
-      bank: defaultBank,
-      entryType: "credit",
-      note: "",
-    },
+  const currency = currencyCode;
+  const [data, setData] = useState(initialData);
+  const [syncedFrom, setSyncedFrom] = useState(initialData);
+  const [sheet, setSheet] = useState<{ open: boolean; entry: CashReserveEntrySummary | null; nonce: number }>({
+    open: false,
+    entry: null,
+    nonce: 0,
   });
+  const [saving, setSaving] = useState(false);
+  const [bankFilter, setBankFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "credit" | "debit">("all");
+  const [monthFilter, setMonthFilter] = useState("all");
 
-  const formatter = useMemo(() => createCurrencyFormatter(currencyCode), [currencyCode]);
-  const snapshotMonths = useMemo(() => [...initialData.months].reverse(), [initialData.months]);
-  const trendMonths = useMemo(
+  // Re-sync when the server hands us fresh props (router.refresh()).
+  if (syncedFrom !== initialData) {
+    setSyncedFrom(initialData);
+    setData(initialData);
+  }
+
+  const history: CashReserveMonthSummary[] = data.history ?? data.months;
+  const entries = useMemo(() => data.allEntries ?? data.recentActivity.entries, [data]);
+  const current = history[history.length - 1];
+  const sixMonths = history.slice(-6);
+  const average = sixMonths.length
+    ? sixMonths.reduce((sum, month) => sum + month.closingBalance, 0) / sixMonths.length
+    : 0;
+  const previousClosing = history.length > 1 ? history[history.length - 2].closingBalance : 0;
+  const changePercent = previousClosing > 0 ? (data.monthOverMonthChangeAmount / previousClosing) * 100 : null;
+
+  const bankRows = useMemo(() => {
+    const known = new Map(data.bankDistribution.map((entry) => [entry.bank, entry]));
+    const names = [...banks, ...data.bankDistribution.map((entry) => entry.bank).filter((name) => !banks.includes(name))];
+
+    return names.map((bank, index) => ({
+      bank,
+      balance: known.get(bank)?.balance ?? 0,
+      percentage: known.get(bank)?.percentage ?? 0,
+      lastDate: known.get(bank)?.lastMovementDate ?? null,
+      lastAmount: known.get(bank)?.lastMovementAmount ?? null,
+      lastType: known.get(bank)?.lastMovementType ?? null,
+      color: SERIES_COLORS[index % SERIES_COLORS.length],
+    }));
+  }, [banks, data.bankDistribution]);
+
+  const monthOptions = useMemo(
+    () => Array.from(new Set(entries.map((entry) => entry.dateKey.slice(0, 7)))).sort().reverse(),
+    [entries]
+  );
+  const filtered = useMemo(
     () =>
-      initialData.months.map((month) => ({
-        ...month,
-        debits: -month.debits,
-      })),
-    [initialData.months]
+      entries.filter(
+        (entry) =>
+          (bankFilter === "all" || entry.bank === bankFilter) &&
+          (typeFilter === "all" || entry.entryType === typeFilter) &&
+          (monthFilter === "all" || entry.dateKey.startsWith(monthFilter))
+      ),
+    [entries, bankFilter, typeFilter, monthFilter]
   );
-  const visibleTrendMonths = useMemo(
-    () => (isCompactTrendViewport ? trendMonths.slice(-4) : trendMonths),
-    [isCompactTrendViewport, trendMonths]
-  );
-  const trendAxisExtent = useMemo(() => {
-    const maxMovement = visibleTrendMonths.reduce((max, month) => {
-      return Math.max(max, month.credits, Math.abs(month.debits));
-    }, 0);
+  const filteredNet = filtered.reduce((sum, entry) => sum + (entry.entryType === "credit" ? entry.amount : -entry.amount), 0);
 
-    return maxMovement > 0 ? maxMovement : 1;
-  }, [visibleTrendMonths]);
-  const selectedEntryType = useWatch({
-    control,
-    name: "entryType",
-  });
-  const trendUp = initialData.monthOverMonthChangeAmount >= 0;
-  const trendPctLabel = `${trendUp ? "+" : ""}${initialData.monthOverMonthChangePct.toFixed(1)}%`;
-  const trendAmountLabel = `${trendUp ? "+" : "-"}${formatter.format(
-    Math.abs(initialData.monthOverMonthChangeAmount)
-  )}`;
-  const activity = activityState?.activity ?? initialData.recentActivity;
-  const activityQuery = activityState?.query ?? createActivityQueryState(initialData.recentActivity);
-  const hasActivityInteraction = activityState !== null;
-  const hasActivityFilters = Boolean(
-    activityQuery.month || activityQuery.year || activityQuery.date || activityQuery.entryType !== "all"
-  );
-  const activityRangeStart = activity.totalCount ? (activity.page - 1) * activity.pageSize + 1 : 0;
-  const activityRangeEnd = activity.totalCount ? activityRangeStart + activity.entries.length - 1 : 0;
+  function openSheet(entry: CashReserveEntrySummary | null) {
+    setSheet((state) => ({ open: true, entry, nonce: state.nonce + 1 }));
+  }
 
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 640px)");
+  async function request(url: string, method: string, body?: unknown, success?: string) {
+    setSaving(true);
 
-    const updateViewport = () => {
-      setIsCompactTrendViewport(mediaQuery.matches);
-    };
-
-    updateViewport();
-    mediaQuery.addEventListener("change", updateViewport);
-
-    return () => {
-      mediaQuery.removeEventListener("change", updateViewport);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!hasActivityInteraction) {
-      return;
-    }
-
-    const controller = new AbortController();
-
-    async function loadActivity() {
-      const params = new URLSearchParams({
-        page: String(activityQuery.page),
-        pageSize: "10",
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
       });
+      const payload = (await response.json().catch(() => null)) as {
+        message?: string;
+        dashboard?: CashReserveDashboardData;
+      } | null;
 
-      if (activityQuery.month) {
-        params.set("month", activityQuery.month);
+      if (!response.ok) {
+        toast.error(payload?.message || "Something went wrong.");
+        return;
       }
 
-      if (activityQuery.year) {
-        params.set("year", activityQuery.year);
-      }
-
-      if (activityQuery.date) {
-        params.set("date", activityQuery.date);
-      }
-
-      if (activityQuery.entryType !== "all") {
-        params.set("entryType", activityQuery.entryType);
-      }
-
-      setIsActivityLoading(true);
-
-      try {
-        const response = await fetch(`/api/cash-reserves?${params.toString()}`, {
-          signal: controller.signal,
-        });
-        const result = (await response.json().catch(() => null)) as
-          | { activity?: CashReserveRecentActivityPage; message?: string }
-          | null;
-
-        if (!response.ok || !result?.activity) {
-          throw new Error(result?.message || "Unable to load recent activity.");
-        }
-
-        const nextActivity = result.activity;
-
-        setActivityState((current) => ({
-          activity: nextActivity,
-          query: current?.query ?? activityQuery,
-        }));
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        toast.error(error instanceof Error ? error.message : "Unable to load recent activity.");
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsActivityLoading(false);
-        }
-      }
-    }
-
-    void loadActivity();
-
-    return () => {
-      controller.abort();
-    };
-  }, [
-    hasActivityInteraction,
-    activityQuery,
-  ]);
-
-  async function onSubmit(values: AddEntryValues) {
-    const response = await fetch("/api/cash-reserves", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        date: values.date,
-        amount: Number(values.amount),
-        bank: values.bank,
-        entryType: values.entryType,
-        note: values.note,
-      }),
-    });
-
-    const result = (await response.json().catch(() => null)) as
-      | { message?: string }
-      | null;
-
-    if (!response.ok) {
-      toast.error(result?.message || "Unable to save cash reserve entry.");
-      return;
-    }
-
-    toast.success(result?.message || "Cash reserve entry added.");
-    reset({
-      date: new Date().toISOString().slice(0, 10),
-      amount: "",
-      bank: defaultBank,
-      entryType: "credit",
-      note: "",
-    });
-    setIsModalOpen(false);
-    setActivityState(null);
-    setIsActivityLoading(false);
-
-    startTransition(() => {
+      if (payload?.dashboard) setData(payload.dashboard);
+      toast.success(success || payload?.message || "Saved.");
+      setSheet((state) => ({ ...state, open: false }));
       router.refresh();
-    });
+    } catch {
+      toast.error("Network error. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function updateActivityQuery(updater: (current: ActivityQueryState) => ActivityQueryState) {
-    setActivityState((current) => ({
-      activity: current?.activity ?? initialData.recentActivity,
-      query: updater(current?.query ?? createActivityQueryState(initialData.recentActivity)),
-    }));
+  function handleSubmit(values: CashEntrySubmit) {
+    const editing = sheet.entry;
+
+    if (editing) {
+      void request(`/api/cash-reserves/${editing.id}`, "PATCH", values, "Entry updated.");
+    } else {
+      void request("/api/cash-reserves", "POST", values, values.entryType === "transfer" ? "Transfer recorded." : "Entry added.");
+    }
   }
 
-  function resetActivityFilters() {
-    updateActivityQuery(() => ({
-      page: 1,
-      month: "",
-      year: "",
-      date: "",
-      entryType: "all",
-    }));
+  function handleDelete() {
+    const editing = sheet.entry;
+
+    if (!editing || !window.confirm("Delete this entry? This cannot be undone.")) return;
+    void request(`/api/cash-reserves/${editing.id}`, "DELETE", undefined, "Entry deleted.");
   }
+
+  const addButton = (
+    <Button variant="primary" icon={Plus} onClick={() => openSheet(null)} disabled={!banks.length}>
+      Add entry
+    </Button>
+  );
+
+  const sheetNode = (
+    <CashEntrySheet
+      key={sheet.nonce}
+      open={sheet.open}
+      onClose={() => setSheet((state) => ({ ...state, open: false }))}
+      banks={banks}
+      entry={sheet.entry}
+      saving={saving}
+      onSubmit={handleSubmit}
+      onDelete={handleDelete}
+    />
+  );
+
+  if (!banks.length && !entries.length) {
+    return (
+      <Page>
+        <Card>
+          <EmptyState
+            icon={Landmark}
+            title="Add your banks to start"
+            message="Add the banks you hold savings in from Settings, then record credits and debits here."
+          />
+        </Card>
+      </Page>
+    );
+  }
+
+  const activityColumns: DataColumn<CashReserveEntrySummary>[] = [
+    {
+      key: "date",
+      header: "Date",
+      cell: (row) => <span className="whitespace-nowrap">{formatDate(row.dateKey)}</span>,
+      sortValue: (row) => row.dateKey,
+      mobile: "subtitle",
+    },
+    {
+      key: "bank",
+      header: "Bank",
+      cell: (row) => row.bank,
+      sortValue: (row) => row.bank,
+      mobile: "title",
+    },
+    {
+      key: "type",
+      header: "Type",
+      cell: (row) => (
+        <Badge tone={row.entryType === "credit" ? "gain" : "loss"}>
+          {row.entryType === "credit" ? "Credit" : "Debit"}
+        </Badge>
+      ),
+      mobile: "hidden",
+    },
+    {
+      key: "note",
+      header: "Note",
+      cell: (row) => <span className="line-clamp-1 text-ink-2">{row.note || "—"}</span>,
+      className: "max-w-[18rem]",
+      mobile: "detail",
+    },
+    {
+      key: "amount",
+      header: "Amount",
+      align: "right",
+      cell: (row) => (
+        <span className={cn("font-semibold", row.entryType === "credit" ? "text-gain" : "text-loss")}>
+          {row.entryType === "credit" ? "+" : "−"}
+          {formatMoney(row.amount, { currency })}
+        </span>
+      ),
+      sortValue: (row) => (row.entryType === "credit" ? row.amount : -row.amount),
+      mobile: "value",
+    },
+    {
+      key: "edit",
+      header: <span className="sr-only">Edit</span>,
+      align: "right",
+      cell: () => <Pencil className="ml-auto size-3.5 text-ink-3" aria-hidden />,
+      mobile: "hidden",
+      className: "w-8",
+    },
+  ];
+
+  const snapshotColumns: DataColumn<CashReserveMonthSummary>[] = [
+    { key: "month", header: "Month", cell: (row) => row.longLabel ?? row.label, mobile: "title" },
+    {
+      key: "closing",
+      header: "Closing balance",
+      align: "right",
+      cell: (row) => <span className="font-semibold">{formatMoney(row.closingBalance, { currency, decimals: 0 })}</span>,
+      mobile: "value",
+    },
+    {
+      key: "net",
+      header: "Net",
+      align: "right",
+      cell: (row) => <Delta value={row.net} currency={currency} compact />,
+      mobile: "valueSub",
+    },
+    {
+      key: "credits",
+      header: "Credits",
+      align: "right",
+      cell: (row) => formatMoney(row.credits, { currency, decimals: 0 }),
+      mobile: "detail",
+    },
+    {
+      key: "debits",
+      header: "Debits",
+      align: "right",
+      cell: (row) => formatMoney(row.debits, { currency, decimals: 0 }),
+      mobile: "detail",
+    },
+  ];
+
+  const hasHistory = history.some((month) => month.credits || month.debits) || data.totalBalance !== 0;
+  const snapshotRows = [...history].reverse().filter((month) => month.credits || month.debits).slice(0, 12);
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f5f7fb] p-4 sm:p-6">
-      <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
-        <div className="grid gap-4 xl:grid-cols-[1.45fr_0.9fr_0.9fr]">
-          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-neutral-500">Total Cash Reserve</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight text-neutral-950 sm:text-[2.35rem]">
-                  {formatter.format(initialData.totalBalance)}
-                </h2>
-                <div
-                  className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
-                    trendUp
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-rose-50 text-rose-700"
-                  }`}
-                >
-                  {trendUp ? <ArrowUpRight className="size-4" /> : <ArrowDownRight className="size-4" />}
-                  <span>{trendPctLabel}</span>
-                  <span className="text-current/70">vs last month</span>
-                </div>
-              </div>
-
-              <button
-                className="inline-flex items-center gap-2 rounded-2xl bg-[#111111] px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-                onClick={() => setIsModalOpen(true)}
-                type="button"
-              >
-                <Plus className="size-4" />
-                <span>Add Entry</span>
-              </button>
-            </div>
-          </section>
-
-          <SummaryCard
-            icon={<Wallet className="size-5 text-neutral-950" />}
-            subtitle="Movement This Month"
-            title={trendAmountLabel}
-            tone={trendUp ? "positive" : "negative"}
-          />
-
-          <SummaryCard
-            icon={<Landmark className="size-5 text-neutral-950" />}
-            subtitle="6-Month Average"
-            title={formatter.format(getAverageBalance(initialData.months))}
-            tone="neutral"
-          />
-        </div>
-
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Money Distribution by Bank</h3>
-              <p className="mt-1 text-sm text-neutral-500">Current reserve balance split across selected banks.</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-medium text-neutral-500">Total Money in Reserves</p>
-              <p className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">
-                {formatter.format(initialData.totalBalance)}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {initialData.bankDistribution.length ? (
-              initialData.bankDistribution.map((entry) => (
-                <div
-                  className="rounded-[1.25rem] border border-[#eef2f7] bg-[#fafaf8] p-4"
-                  key={entry.bank}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="min-w-0 truncate text-sm font-semibold text-neutral-950">{entry.bank}</p>
-                    <p
-                      className={`shrink-0 text-sm font-semibold ${
-                        entry.balance >= 0 ? "text-emerald-600" : "text-rose-600"
-                      }`}
-                    >
-                      {formatter.format(entry.balance)}
-                    </p>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#e9edf3]">
-                    <div
-                      className={entry.balance >= 0 ? "h-full rounded-full bg-[#111111]" : "h-full rounded-full bg-rose-500"}
-                      style={{ width: `${Math.min(entry.percentage, 100)}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-xs text-neutral-500">{entry.percentage.toFixed(1)}% of reserve total</p>
-                </div>
-              ))
-            ) : (
-              <div className="rounded-[1.5rem] border border-dashed border-[#d9dfeb] bg-[#fafaf8] px-5 py-8 text-center text-sm text-neutral-500 md:col-span-2 xl:col-span-3">
-                No bank distribution yet. Add a cash reserve entry with a bank to see the split.
-              </div>
-            )}
-          </div>
-        </section>
-
-        <div className="grid gap-6 xl:grid-cols-[1.05fr_1.45fr]">
-          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Monthly Snapshot</h3>
-                <p className="mt-1 text-sm text-neutral-500">Credits, debits, and closing balance.</p>
-              </div>
-            </div>
-
-            <div className="mt-5 overflow-x-auto rounded-[1.5rem] border border-[#eef2f7]">
-              <table className="min-w-[32rem] text-left">
-                <thead className="bg-[#fafaf8] text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">
-                  <tr>
-                    <th className="px-4 py-3">Month</th>
-                    <th className="px-4 py-3">Credit</th>
-                    <th className="px-4 py-3">Debit</th>
-                    <th className="px-4 py-3">Balance</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#eef2f7] bg-white">
-                  {snapshotMonths.map((month) => (
-                    <tr key={month.key} className="text-sm text-neutral-700">
-                      <td className="px-4 py-3 font-medium text-neutral-950">{month.label}</td>
-                      <td className="px-4 py-3 text-emerald-600">{formatter.format(month.credits)}</td>
-                      <td className="px-4 py-3 text-rose-600">{formatter.format(month.debits)}</td>
-                      <td className="px-4 py-3 font-medium text-neutral-950">
-                        {formatter.format(month.closingBalance)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="min-w-0 rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Reserve Trend</h3>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Monthly credit and debit totals for the last {isCompactTrendViewport ? 4 : 6} months.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <div className="h-[18rem] min-h-[18rem] min-w-0 sm:h-[21rem] sm:min-h-[21rem]">
-                <ResponsiveContainer minHeight={288} minWidth={0} width="100%" height="100%">
-                  <BarChart data={visibleTrendMonths} barCategoryGap={18} margin={{ top: 12, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke="var(--wc-chart-grid)" strokeDasharray="4 4" vertical={false} />
-                  <XAxis
-                    axisLine={false}
-                    dataKey="label"
-                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tick={{ fill: "var(--wc-chart-tick)", fontSize: 12 }}
-                    domain={[-trendAxisExtent, trendAxisExtent]}
-                    tickFormatter={(value) => compactCurrency(Math.abs(Number(value) || 0), formatter)}
-                    tickLine={false}
-                    width={64}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "var(--wc-tooltip-bg)",
-                      border: "1px solid var(--wc-tooltip-border)",
-                      borderRadius: "16px",
-                      boxShadow: "0 18px 48px rgba(15, 23, 42, 0.12)",
-                      color: "var(--wc-tooltip-text)",
-                    }}
-                    formatter={(value, name) => [
-                      formatter.format(Math.abs(Number(value) || 0)),
-                      name === "credits" ? "Credit" : "Debit",
-                    ]}
-                    labelStyle={{ color: "var(--wc-tooltip-text)", fontWeight: 600 }}
-                  />
-                  <Bar dataKey="credits" fill="#16a34a" name="credits" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="debits" fill="#dc2626" name="debits" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Recent Activity</h3>
-              <p className="mt-1 text-sm text-neutral-500">Filter and review cash reserve activity in pages of 10.</p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-[0.9fr_0.9fr_1.1fr_0.9fr_auto]">
-            <label className="space-y-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Month</span>
-              <select
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                onChange={(event) => {
-                  const value = event.target.value;
-
-                  updateActivityQuery((current) => ({
-                    ...current,
-                    page: 1,
-                    month: value,
-                    date: "",
-                  }));
-                }}
-                value={activityQuery.month}
-              >
-                <option value="">All months</option>
-                {MONTH_FILTER_OPTIONS.map((month) => (
-                  <option key={month.value} value={month.value}>
-                    {month.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Year</span>
-              <select
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                onChange={(event) => {
-                  const value = event.target.value;
-
-                  updateActivityQuery((current) => ({
-                    ...current,
-                    page: 1,
-                    year: value,
-                    date: "",
-                  }));
-                }}
-                value={activityQuery.year}
-              >
-                <option value="">All years</option>
-                {activity.availableYears.map((year) => (
-                  <option key={year} value={String(year)}>
-                    {year}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Date</span>
-              <input
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                max={new Date().toISOString().slice(0, 10)}
-                onChange={(event) => {
-                  const value = event.target.value;
-
-                  updateActivityQuery((current) => ({
-                    ...current,
-                    page: 1,
-                    date: value,
-                    month: value ? "" : current.month,
-                    year: value ? "" : current.year,
-                  }));
-                }}
-                type="date"
-                value={activityQuery.date}
+    <Page>
+      {/* Hero */}
+      <Card>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-ink-3">Total cash &amp; savings</p>
+            <p className="tabular mt-1 text-[2.1rem] leading-tight font-semibold tracking-tight text-ink sm:text-[2.6rem]">
+              {formatMoney(data.totalBalance, { currency, decimals: 0 })}
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Delta
+                value={data.monthOverMonthChangeAmount}
+                percent={changePercent}
+                currency={currency}
+                suffix="this month"
               />
-            </label>
-
-            <label className="space-y-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">Type</span>
-              <select
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                onChange={(event) => {
-                  const value = event.target.value as ActivityQueryState["entryType"];
-
-                  updateActivityQuery((current) => ({
-                    ...current,
-                    page: 1,
-                    entryType: value,
-                  }));
-                }}
-                value={activityQuery.entryType}
-              >
-                <option value="all">All types</option>
-                <option value="credit">Credit</option>
-                <option value="debit">Debit</option>
-              </select>
-            </label>
-
-            <div className="flex items-end">
-              <button
-                className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] px-4 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={!hasActivityFilters && activity.page === 1}
-                onClick={resetActivityFilters}
-                type="button"
-              >
-                Reset
-              </button>
             </div>
           </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-neutral-500">
-            <p>
-              {activity.totalCount
-                ? `Showing ${activityRangeStart}-${activityRangeEnd} of ${activity.totalCount} entries`
-                : "No entries to show"}
-            </p>
-            {isActivityLoading ? <p>Loading activity...</p> : null}
-          </div>
-
-          <div className="mt-5 grid gap-3">
-            {activity.entries.length ? (
-              activity.entries.map((entry) => {
-                const positive = entry.entryType === "credit";
-
-                return (
-                  <div
-                    key={entry.id}
-                    className="flex items-center justify-between rounded-[1.4rem] border border-[#eef2f7] bg-[#fafaf8] px-4 py-4"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-neutral-950">
-                        {new Intl.DateTimeFormat("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        }).format(new Date(entry.date))}
-                      </p>
-                      <p className="mt-1 text-sm text-neutral-500">
-                        {positive ? "Credit entry added to reserve" : "Debit entry recorded from reserve"}
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-                        <span className="rounded-full bg-white px-2.5 py-1 font-medium text-neutral-600">
-                          {entry.bank}
-                        </span>
-                        <button
-                          className="inline-flex items-center gap-1 rounded-full border border-[#dbe2ee] bg-white px-2.5 py-1 font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={!entry.note}
-                          onClick={() => setNoteEntry(entry)}
-                          type="button"
-                        >
-                          <Eye className="size-3.5" />
-                          <span>{entry.note ? "View note" : "No note"}</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="text-right">
-                      <p className={`text-base font-semibold ${positive ? "text-emerald-600" : "text-rose-600"}`}>
-                        {positive ? "+" : "-"}
-                        {formatter.format(entry.amount)}
-                      </p>
-                      <p className="mt-1 text-xs font-medium uppercase tracking-[0.14em] text-neutral-400">
-                        {entry.entryType}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="rounded-[1.5rem] border border-dashed border-[#d9dfeb] bg-[#fafaf8] px-5 py-10 text-center text-sm text-neutral-500">
-                {hasActivityFilters
-                  ? "No cash reserve entries match the selected filters."
-                  : "No cash reserve entries yet. Add your first credit or debit to start tracking."}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-5 flex items-center justify-end gap-3">
-            <button
-              className="rounded-[1rem] border border-[#dbe2ee] px-4 py-2 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={activity.page <= 1 || isActivityLoading}
-              onClick={() => {
-                updateActivityQuery((current) => ({
-                  ...current,
-                  page: Math.max(1, current.page - 1),
-                }));
-              }}
-              type="button"
-            >
-              Previous
-            </button>
-            <p className="min-w-[7rem] text-center text-sm font-medium text-neutral-600">
-              Page {activity.page} of {activity.totalPages}
-            </p>
-            <button
-              className="rounded-[1rem] border border-[#111111] bg-[#111111] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={activity.page >= activity.totalPages || isActivityLoading}
-              onClick={() => {
-                updateActivityQuery((current) => ({
-                  ...current,
-                  page: Math.min(activity.totalPages, current.page + 1),
-                }));
-              }}
-              type="button"
-            >
-              Next
-            </button>
-          </div>
-        </section>
-      </div>
-
-      {isModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6">
-          <div className="max-h-[calc(100vh-3rem)] w-full max-w-md overflow-y-auto rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-xl font-semibold tracking-tight text-neutral-950">Add Cash Entry</h3>
-                <p className="mt-1 text-sm text-neutral-500">
-                  Save a credit or debit entry against your reserve balance.
-                </p>
-              </div>
-              <button
-                className="rounded-full px-3 py-1 text-sm font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
-                onClick={() => {
-                  setIsModalOpen(false);
-                  reset();
-                }}
-                type="button"
-              >
-                Close
-              </button>
+          <div className="flex items-center gap-2">{addButton}</div>
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            { label: "Credits this month", value: formatMoney(current?.credits ?? 0, { currency, decimals: 0 }) },
+            { label: "Debits this month", value: formatMoney(current?.debits ?? 0, { currency, decimals: 0 }) },
+            { label: "6-month average", value: formatCompactMoney(average, { currency }) },
+            {
+              label: "Last activity",
+              value: data.lastActivityDate ? formatRelativeTime(data.lastActivityDate) : "—",
+              title: data.lastActivityDate ? formatDate(data.lastActivityDate) : undefined,
+            },
+          ].map((item) => (
+            <div key={item.label} className="min-w-0 rounded-xl bg-surface-2 px-3 py-2" title={item.title}>
+              <dt className="truncate text-[0.7rem] font-medium text-ink-3">{item.label}</dt>
+              <dd className="tabular mt-0.5 truncate text-sm font-semibold text-ink">{item.value}</dd>
             </div>
+          ))}
+        </dl>
+      </Card>
 
-            <form className="mt-6 space-y-5" onSubmit={handleSubmit(onSubmit)}>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Date</span>
-                <input
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  max={new Date().toISOString().slice(0, 10)}
-                  type="date"
-                  {...register("date", {
-                    required: "Date is required.",
-                  })}
-                />
-                {errors.date ? <span className="text-sm text-destructive">{errors.date.message}</span> : null}
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Bank</span>
-                <select
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition focus:border-[#111111] focus:ring-3 focus:ring-black/5 disabled:bg-[#f7f7f5] disabled:text-neutral-400"
-                  disabled={!bankOptions.length}
-                  {...register("bank", {
-                    required: "Bank is required.",
-                  })}
-                >
-                  {bankOptions.length ? (
-                    bankOptions.map((bank) => (
-                      <option key={bank} value={bank}>
-                        {bank}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="">Add banks in Settings first</option>
-                  )}
-                </select>
-                {errors.bank ? <span className="text-sm text-destructive">{errors.bank.message}</span> : null}
-              </label>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Amount</span>
-                <input
-                  className="h-[3rem] w-full rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  placeholder="25000"
-                  step="0.01"
-                  type="number"
-                  {...register("amount", {
-                    required: "Amount is required.",
-                    validate: (value) =>
-                      Number(value) > 0 || "Amount must be greater than zero.",
-                  })}
-                />
-                {errors.amount ? <span className="text-sm text-destructive">{errors.amount.message}</span> : null}
-              </label>
-
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium text-neutral-800">Entry Type</legend>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="cursor-pointer">
-                    <input
-                      className="sr-only"
-                      type="radio"
-                      value="credit"
-                      {...register("entryType", {
-                        required: "Entry type is required.",
-                      })}
-                    />
-                    <div
-                      className={`rounded-[1rem] border px-4 py-3 text-sm font-semibold transition ${
-                        selectedEntryType === "credit"
-                          ? "border-emerald-400 bg-emerald-100 text-emerald-800 shadow-sm"
-                          : "border-emerald-200 bg-emerald-50 text-emerald-700"
-                      }`}
-                    >
-                      Credit
-                    </div>
-                  </label>
-
-                  <label className="cursor-pointer">
-                    <input
-                      className="sr-only"
-                      type="radio"
-                      value="debit"
-                      {...register("entryType", {
-                        required: "Entry type is required.",
-                      })}
-                    />
-                    <div
-                      className={`rounded-[1rem] border px-4 py-3 text-sm font-semibold transition ${
-                        selectedEntryType === "debit"
-                          ? "border-rose-400 bg-rose-100 text-rose-800 shadow-sm"
-                          : "border-rose-200 bg-rose-50 text-rose-700"
-                      }`}
-                    >
-                      Debit
-                    </div>
-                  </label>
+      {/* Banks */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-1">
+          <CardHeader title="Where it sits" subtitle="Share of total balance by bank" />
+          {bankRows.some((row) => row.balance > 0) ? (
+            <AllocationBar
+              currency={currency}
+              items={bankRows
+                .filter((row) => row.balance > 0)
+                .map((row) => ({ key: row.bank, label: row.bank, value: row.balance, color: row.color }))}
+            />
+          ) : (
+            <p className="py-6 text-center text-sm text-ink-3">No balance in any bank yet.</p>
+          )}
+        </Card>
+        <div className="grid grid-cols-2 gap-3 lg:col-span-2">
+          {bankRows.map((row) => (
+            <Card key={row.bank} className="p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="size-2.5 shrink-0 rounded-full" style={{ background: row.color }} aria-hidden />
+                  <p className="truncate text-sm font-medium text-ink">{row.bank}</p>
                 </div>
-                {errors.entryType ? (
-                  <span className="text-sm text-destructive">{errors.entryType.message}</span>
-                ) : null}
-              </fieldset>
-
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-neutral-800">Note</span>
-                <textarea
-                  className="min-h-24 w-full resize-none rounded-[1rem] border border-[#dbe2ee] bg-white px-3.5 py-3 text-[0.95rem] text-neutral-900 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-[#111111] focus:ring-3 focus:ring-black/5"
-                  placeholder="Add a short note for this transaction"
-                  {...register("note", {
-                    maxLength: {
-                      value: 500,
-                      message: "Note must be 500 characters or fewer.",
-                    },
-                  })}
-                />
-                {errors.note ? <span className="text-sm text-destructive">{errors.note.message}</span> : null}
-              </label>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  className="rounded-[1rem] border border-[#dbe2ee] px-4 py-2.5 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    reset();
-                  }}
-                  type="button"
-                >
-                  Cancel
-                </button>
-                <button
-                  className="rounded-[1rem] bg-[#111111] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isSubmitting || isPending || !isDirty || !bankOptions.length}
-                  type="submit"
-                >
-                  {isSubmitting || isPending ? "Saving..." : "Save Entry"}
-                </button>
+                <Badge>{row.percentage.toFixed(0)}%</Badge>
               </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
-
-      {noteEntry ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setNoteEntry(null);
-            }
-          }}
-        >
-          <div className="w-full max-w-lg rounded-[1.5rem] border border-[#e6ebf2] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
-            <div className="flex items-start justify-between gap-4 border-b border-[#eef2f7] px-5 py-4">
-              <div>
-                <h3 className="text-lg font-semibold tracking-tight text-neutral-950">Transaction Note</h3>
-                <p className="mt-1 text-sm text-neutral-500">{noteEntry.bank}</p>
-              </div>
-              <button
-                aria-label="Close note"
-                className="rounded-xl p-2 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-900"
-                onClick={() => setNoteEntry(null)}
-                type="button"
-              >
-                <X className="size-5" />
-              </button>
-            </div>
-            <div className="px-5 py-4">
-              <p className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-[1rem] border border-[#eef2f7] bg-[#fafaf8] p-4 text-sm leading-6 text-neutral-700">
-                {noteEntry.note}
+              <p className="tabular mt-2 text-lg font-semibold text-ink sm:text-xl">
+                {formatMoney(row.balance, { currency, decimals: 0 })}
               </p>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SummaryCard({
-  title,
-  subtitle,
-  icon,
-  tone,
-}: {
-  title: string;
-  subtitle: string;
-  icon: React.ReactNode;
-  tone: "positive" | "negative" | "neutral";
-}) {
-  const accent =
-    tone === "positive"
-      ? "bg-emerald-50"
-      : tone === "negative"
-        ? "bg-rose-50"
-        : "bg-[#f2f5ef]";
-
-  return (
-    <section className="rounded-[2rem] border border-[#e6ebf2] bg-white p-6 shadow-sm">
-      <div className="flex items-center gap-4">
-        <div className={`flex size-14 items-center justify-center rounded-2xl ${accent}`}>
-          {icon}
-        </div>
-        <div>
-          <p className="text-sm font-medium text-neutral-500">{subtitle}</p>
-          <p className="mt-2 text-[1.75rem] font-semibold tracking-tight text-neutral-950">{title}</p>
+              <p className="mt-1 flex items-center gap-1 truncate text-xs text-ink-3">
+                {row.lastDate && row.lastAmount != null ? (
+                  <>
+                    {row.lastType === "credit" ? (
+                      <ArrowDownLeft className="size-3.5 text-gain" aria-hidden />
+                    ) : (
+                      <ArrowUpRight className="size-3.5 text-loss" aria-hidden />
+                    )}
+                    Last: {row.lastType === "credit" ? "+" : "−"}
+                    {formatCompactMoney(row.lastAmount, { currency })} · {formatRelativeTime(row.lastDate)}
+                  </>
+                ) : (
+                  "No movements yet"
+                )}
+              </p>
+            </Card>
+          ))}
         </div>
       </div>
-    </section>
+
+      {/* Charts */}
+      {hasHistory ? (
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader title="Balance history" subtitle="Month-end closing balance, last 12 months" />
+            <TrendChart
+              data={history}
+              xKey="longLabel"
+              xFormatter={(value) => String(value)}
+              series={[{ key: "closingBalance", label: "Closing balance", color: "var(--wc-asset-cash)" }]}
+              currency={currency}
+              showLegend={false}
+              includeZero
+            />
+          </Card>
+          <Card>
+            <CardHeader title="Monthly net flow" subtitle="Credits minus debits; savings added or spent" />
+            <ColumnChart
+              data={history}
+              xKey="label"
+              series={[{ key: "net", label: "Net flow", color: "var(--wc-asset-cash)" }]}
+              currency={currency}
+              colorFor={(row) => (Number(row.net) < 0 ? "var(--wc-loss)" : "var(--wc-gain)")}
+            />
+          </Card>
+        </div>
+      ) : null}
+
+      {/* Snapshot */}
+      {snapshotRows.length ? (
+        <Card className="mt-4">
+          <CardHeader title="Monthly snapshot" subtitle="Credits, debits and closing balance per month" />
+          <DataTable rows={snapshotRows} columns={snapshotColumns} getRowKey={(row) => row.key} />
+        </Card>
+      ) : null}
+
+      {/* Activity */}
+      <Card className="mt-4">
+        <CardHeader
+          title="Activity"
+          subtitle={`${filtered.length} entr${filtered.length === 1 ? "y" : "ies"} · net ${filteredNet < 0 ? "−" : "+"}${formatMoney(Math.abs(filteredNet), { currency, decimals: 0 })}`}
+          action={
+            <Button size="sm" icon={Plus} onClick={() => openSheet(null)} disabled={!banks.length}>
+              Add
+            </Button>
+          }
+        />
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+          <Select aria-label="Filter by bank" value={bankFilter} onChange={(event) => setBankFilter(event.target.value)} className="sm:w-44">
+            <option value="all">All banks</option>
+            {bankRows.map((row) => (
+              <option key={row.bank} value={row.bank}>{row.bank}</option>
+            ))}
+          </Select>
+          <Select aria-label="Filter by month" value={monthFilter} onChange={(event) => setMonthFilter(event.target.value)} className="sm:w-40">
+            <option value="all">All months</option>
+            {monthOptions.map((key) => (
+              <option key={key} value={key}>{monthLabelOf(key)}</option>
+            ))}
+          </Select>
+          <Segmented
+            ariaLabel="Filter by type"
+            value={typeFilter}
+            onChange={setTypeFilter}
+            className="col-span-2"
+            options={[
+              { value: "all", label: "All" },
+              { value: "credit", label: "Credits" },
+              { value: "debit", label: "Debits" },
+            ]}
+          />
+        </div>
+        <DataTable
+          rows={filtered}
+          columns={activityColumns}
+          getRowKey={(row) => row.id}
+          onRowClick={(row) => openSheet(row)}
+          initialSort={{ key: "date", direction: "desc" }}
+          pageSize={15}
+          empty={
+            <EmptyState
+              icon={Landmark}
+              title={entries.length ? "No entries match these filters" : "No entries yet"}
+              message={entries.length ? "Try a different bank, type or month." : "Add your first credit or debit to start tracking."}
+              action={entries.length ? undefined : addButton}
+            />
+          }
+        />
+        <p className="mt-3 text-xs text-ink-3">Tap an entry to edit or delete it.</p>
+      </Card>
+
+      {sheetNode}
+    </Page>
   );
-}
-
-function createCurrencyFormatter(currencyCode: string) {
-  try {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: currencyCode || "USD",
-      maximumFractionDigits: 0,
-    });
-  } catch {
-    return new Intl.NumberFormat("en-IN", {
-      maximumFractionDigits: 0,
-    });
-  }
-}
-
-function compactCurrency(value: number, formatter: Intl.NumberFormat) {
-  if (Math.abs(value) >= 100000) {
-    return `${Math.round(value / 1000)}k`;
-  }
-
-  const parts = formatter.formatToParts(value);
-  const currency = parts.find((part) => part.type === "currency")?.value || "";
-
-  return `${currency}${Math.round(value)}`;
-}
-
-function getAverageBalance(months: CashReserveDashboardData["months"]) {
-  if (!months.length) {
-    return 0;
-  }
-
-  const total = months.reduce((sum, month) => sum + month.closingBalance, 0);
-  return total / months.length;
-}
-
-function createActivityQueryState(activity: CashReserveRecentActivityPage): ActivityQueryState {
-  return {
-    page: activity.page,
-    month: activity.filters.month ? String(activity.filters.month) : "",
-    year: activity.filters.year ? String(activity.filters.year) : "",
-    date: activity.filters.date || "",
-    entryType: activity.filters.entryType,
-  };
 }

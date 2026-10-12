@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 
 import { getTokenFromRequest } from "@/lib/api-auth";
 import { verifyAuthToken } from "@/lib/auth";
-import { createMarketSyncBatch, type MarketSyncRefreshAssetType } from "@/lib/market-sync";
+import { runMarketSync, type MarketSyncRunAssetType } from "@/lib/market-sync";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const session = await verifyAuthToken(getTokenFromRequest(request));
@@ -14,22 +15,22 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { assetType?: MarketSyncRefreshAssetType }
+    | { assetType?: MarketSyncRunAssetType }
     | null;
   const assetType = body?.assetType || "mixed";
 
-  if (assetType !== "stock" && assetType !== "mutual_fund" && assetType !== "mixed") {
+  if (!["stock", "mutual_fund", "gold", "mixed"].includes(assetType)) {
     return NextResponse.json({ message: "Invalid refresh asset type." }, { status: 400 });
   }
 
   try {
-    const batch = await createMarketSyncBatch({
+    const result = await runMarketSync({
       userId: session.sub,
       assetType,
       source: "manual",
     });
 
-    return NextResponse.json({ batch });
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Unable to refresh market data." },

@@ -9,40 +9,19 @@ export default async function SignupPage() {
 
   return (
     <PublicShell>
-      <main className="mx-auto flex w-full max-w-6xl flex-1 items-center px-6 py-12">
-        <div className="grid w-full gap-10 lg:grid-cols-[0.95fr_1.05fr]">
-          <section className="flex flex-col justify-center">
-            <p className="text-sm font-medium uppercase tracking-[0.22em] text-muted-foreground">
-              Get started
-            </p>
-            <h1 className="mt-4 max-w-lg text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-              Create your protected Wealth Compass workspace
-            </h1>
-            <p className="mt-5 max-w-xl text-lg leading-8 text-muted-foreground">
-              Your account is stored in MongoDB and immediately receives a secure
-              JWT session cookie after signup.
-            </p>
-          </section>
-          <section className="rounded-[2rem] border border-border/70 bg-card/90 p-6 shadow-xl shadow-black/5 backdrop-blur">
-            <div className="rounded-[1.5rem] border border-border/70 bg-background p-6 sm:p-8">
-              <AuthForm
-                cta="Create account"
-                helper="Start with your basic profile details."
-                mode="signup"
-              />
-              <div className="mt-6 border-t border-border pt-6 text-sm text-muted-foreground">
-                Already have an account?{" "}
-                <Link
-                  className="font-medium text-foreground underline-offset-4 hover:underline"
-                  href="/login"
-                >
-                  Sign in
-                </Link>
-              </div>
-            </div>
-          </section>
+      <div className="rounded-2xl border border-line bg-surface p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_32px_rgba(16,24,40,0.06)] sm:p-7">
+        <h1 className="text-xl font-semibold tracking-tight text-ink">Create your account</h1>
+        <p className="mt-1 text-sm text-ink-3">Track investments, cash, goals and expenses in one place.</p>
+        <div className="mt-6">
+          <AuthForm cta="Create account" helper="Start with your basic profile details." mode="signup" />
         </div>
-      </main>
+      </div>
+      <p className="mt-5 text-center text-sm text-ink-3">
+        Already have an account?{" "}
+        <Link className="font-medium text-brand underline-offset-4 hover:underline" href="/login">
+          Sign in
+        </Link>
+      </p>
     </PublicShell>
   );
 }

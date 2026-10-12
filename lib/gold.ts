@@ -10,8 +10,10 @@ import type {
   GoldOptionDistribution,
   GoldRecentActivityPage,
   GoldTransactionType,
+  GoldValuePoint,
 } from "@/lib/gold.types";
 import { connectToDatabase } from "@/lib/mongodb";
+import { calculateXirr } from "@/lib/xirr";
 import { GoldTransaction } from "@/lib/models/gold-transaction";
 
 const RECENT_ACTIVITY_PAGE_SIZE = 10;
@@ -106,7 +108,7 @@ function normalizeSchemeName(value: string) {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function createHoldingId(option: GoldInvestmentOption, schemeName: string) {
+export function createGoldHoldingId(option: GoldInvestmentOption, schemeName: string) {
   return `${option}::${normalizeSchemeName(schemeName).toLowerCase()}`;
 }
 
@@ -161,7 +163,7 @@ function buildLedgerFromTransactions(
     }
 
     const schemeName = normalizeSchemeName(transaction.schemeName);
-    const holdingId = createHoldingId(transaction.investmentOption, schemeName);
+    const holdingId = createGoldHoldingId(transaction.investmentOption, schemeName);
     const current = holdings.get(holdingId) || {
       id: holdingId,
       investmentOption: transaction.investmentOption,
@@ -247,11 +249,16 @@ async function loadTransactions(userId: string) {
     .lean()) as GoldTransactionRecord[];
 }
 
+export async function getActiveGoldHoldings(userId: string) {
+  const transactions = await loadTransactions(userId);
+  return buildLedgerFromTransactions(transactions).holdings;
+}
+
 function getHoldingFromInput(
   holdings: GoldHoldingSummary[],
   input: { investmentOption: GoldInvestmentOption; schemeName: string }
 ) {
-  const holdingId = createHoldingId(input.investmentOption, input.schemeName);
+  const holdingId = createGoldHoldingId(input.investmentOption, input.schemeName);
 
   return holdings.find((holding) => holding.id === holdingId) || null;
 }
@@ -281,13 +288,13 @@ function buildOptionDistribution(holdings: GoldHoldingSummary[]): GoldOptionDist
 
 export async function getGoldRecentActivity(
   userId: string,
-  options?: { page?: number; pageSize?: number }
+  options?: { page?: number; pageSize?: number; maxPageSize?: number }
 ): Promise<GoldRecentActivityPage> {
   await connectToDatabase();
 
   const pageSize = Math.min(
     Math.max(options?.pageSize || RECENT_ACTIVITY_PAGE_SIZE, 1),
-    RECENT_ACTIVITY_PAGE_SIZE
+    options?.maxPageSize ?? RECENT_ACTIVITY_PAGE_SIZE
   );
   const requestedPage = Math.max(options?.page || 1, 1);
   const totalCount = await GoldTransaction.countDocuments({ userId });
@@ -336,10 +343,73 @@ export async function getGoldRecentActivity(
   };
 }
 
+function dateKey(date: Date) {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Daily total value / invested series. For every day that has an entry we rebuild the
+// ledger up to the end of that day, so each holding carries its last valuation forward
+// and sold-out holdings drop out.
+export function buildGoldValueSeries(transactions: GoldTransactionRecord[]): GoldValuePoint[] {
+  const days = new Map<string, Date>();
+
+  for (const transaction of transactions) {
+    const date = new Date(transaction.transactionDate);
+    days.set(dateKey(date), date);
+  }
+
+  return [...days.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : 1))
+    .map(([key, date]) => {
+      const { holdings } = buildLedgerFromTransactions(transactions, {
+        cutoffDate: new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999),
+      });
+
+      return {
+        date: key,
+        totalValue: roundCurrency(holdings.reduce((sum, holding) => sum + holding.currentValue, 0)),
+        totalInvested: roundCurrency(
+          holdings.reduce((sum, holding) => sum + holding.investedAmount, 0)
+        ),
+      };
+    })
+    .filter((point) => point.totalValue > 0);
+}
+
 export async function getGoldDashboard(userId: string): Promise<GoldDashboardData> {
   const transactions = await loadTransactions(userId);
   const ledger = buildLedgerFromTransactions(transactions);
-  const holdings = ledger.holdings;
+  const lastEntryByHolding = new Map<string, Date>();
+
+  for (const transaction of sortTransactions(transactions)) {
+    if (transaction.transactionType === "sell") continue;
+    lastEntryByHolding.set(
+      createGoldHoldingId(transaction.investmentOption, transaction.schemeName),
+      new Date(transaction.transactionDate)
+    );
+  }
+
+  const holdings = ledger.holdings.map((holding) => ({
+    ...holding,
+    lastValuedAt: lastEntryByHolding.get(holding.id)?.toISOString() ?? null,
+  }));
+  const valueHistory = buildGoldValueSeries(transactions);
+  const lastPoint = valueHistory[valueHistory.length - 1];
+  const previousPoint = valueHistory[valueHistory.length - 2];
+  const lastDayChange =
+    lastPoint && previousPoint
+      ? {
+          amount: roundCurrency(lastPoint.totalValue - previousPoint.totalValue),
+          pct: previousPoint.totalValue
+            ? roundCurrency(
+                ((lastPoint.totalValue - previousPoint.totalValue) / previousPoint.totalValue) * 100
+              )
+            : null,
+          fromDate: previousPoint.date,
+          toDate: lastPoint.date,
+        }
+      : null;
   const totalCurrentValue = roundCurrency(
     holdings.reduce((sum, holding) => sum + holding.currentValue, 0)
   );
@@ -387,6 +457,9 @@ export async function getGoldDashboard(userId: string): Promise<GoldDashboardDat
     page: 1,
     pageSize: RECENT_ACTIVITY_PAGE_SIZE,
   });
+  const allActivity = (
+    await getGoldRecentActivity(userId, { page: 1, pageSize: 500, maxPageSize: 500 })
+  ).entries;
 
   return {
     totalCurrentValue,
@@ -399,6 +472,32 @@ export async function getGoldDashboard(userId: string): Promise<GoldDashboardDat
     holdings,
     optionDistribution: buildOptionDistribution(holdings),
     recentActivity,
+    allActivity,
+    valueHistory,
+    lastDayChange,
+    lastValuedAt: lastPoint?.date ?? null,
+    ...buildGoldCashFlows(transactions, totalCurrentValue),
+  };
+}
+
+function buildGoldCashFlows(transactions: GoldTransactionRecord[], currentValue: number) {
+  const cashFlows = transactions
+    .filter((transaction) => transaction.transactionType !== "valuation")
+    .map((transaction) => ({
+      date: new Date(transaction.transactionDate).toISOString(),
+      amount: roundCurrency(
+        transaction.transactionType === "buy"
+          ? -(transaction.investedAmount || 0)
+          : transaction.sellAmount || 0
+      ),
+    }));
+
+  return {
+    cashFlows,
+    xirr: calculateXirr([
+      ...cashFlows.map((flow) => ({ amount: flow.amount, date: new Date(flow.date) })),
+      ...(currentValue > 0 ? [{ amount: currentValue, date: new Date() }] : []),
+    ]),
   };
 }
 

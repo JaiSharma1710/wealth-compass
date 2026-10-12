@@ -1,12 +1,15 @@
 import "server-only";
 
+import { getAccountsDashboard } from "@/lib/accounts";
 import type { SafeUser } from "@/lib/auth";
 import { getCashReserveDashboard } from "@/lib/cash-reserves";
 import {
   attachAllocationPercent,
   buildDashboardInsights,
+  buildPeriodChanges,
   calculateAllocationPercent,
   calculateGainLossPercent,
+  filterHistoryByRange,
   roundCurrency,
   roundPercent,
   sortRecentActivity,
@@ -16,39 +19,57 @@ import {
   getTodayDateKey,
   getTotalAssetKey,
   upsertDailyValues,
+  type DailyValueAssetType,
 } from "@/lib/daily-values";
 import type {
+  DashboardAssetClassKey,
   DashboardAssetClassSummary,
+  DashboardCashFlowSummary,
   DashboardData,
   DashboardGoalsSummary,
   DashboardHistoryPoint,
   DashboardHistoryRange,
+  DashboardMover,
   DashboardRecentActivityItem,
   DashboardSummary,
 } from "@/lib/dashboard.types";
+import { getExpenseDashboard } from "@/lib/expenses";
 import { getGoalsPageData } from "@/lib/goals";
 import { getGoldDashboard } from "@/lib/gold";
+import { getMarketSyncStatus } from "@/lib/market-sync-status";
 import { getMutualFundDashboard } from "@/lib/mutual-funds";
 import { getStockDashboard } from "@/lib/stocks";
+import { calculateXirr } from "@/lib/xirr";
 
 const DEFAULT_HISTORY_RANGE: DashboardHistoryRange = "1M";
 
-type DashboardSnapshotPayload = {
-  totalCurrentWorth: number;
-  totalInvested: number;
-  totalGainLoss: number;
-  totalGainLossPercent: number;
-  stocksValue: number;
-  mutualFundsValue: number;
-  goldValue: number;
-  cashValue: number;
-  goalsSavedValue: number | null;
+type StockDashboard = Awaited<ReturnType<typeof getStockDashboard>>;
+type MutualFundDashboard = Awaited<ReturnType<typeof getMutualFundDashboard>>;
+type GoldDashboard = Awaited<ReturnType<typeof getGoldDashboard>>;
+type CashDashboard = Awaited<ReturnType<typeof getCashReserveDashboard>>;
+type AccountsDashboard = Awaited<ReturnType<typeof getAccountsDashboard>>;
+type ExpenseDashboard = Awaited<ReturnType<typeof getExpenseDashboard>>;
+
+type AssetInputs = {
+  stocks: StockDashboard;
+  mutualFunds: MutualFundDashboard;
+  gold: GoldDashboard;
+  cash: CashDashboard;
+  accounts: AccountsDashboard;
+};
+
+const SNAPSHOT_ASSET_TYPES: Record<DashboardAssetClassKey, DailyValueAssetType> = {
+  stocks: "stock",
+  mutualFunds: "mutual_fund",
+  gold: "gold",
+  cash: "cash",
+  otherAssets: "other",
 };
 
 function buildGoalsSummary(goalsPageData: Awaited<ReturnType<typeof getGoalsPageData>>): DashboardGoalsSummary {
   const activeGoals = goalsPageData.goals.filter((goal) => !goal.isCompleted);
   const totalSavedAmount = roundCurrency(
-    goalsPageData.goals.reduce((sum, goal) => sum + goal.currentValue, 0)
+    goalsPageData.goals.reduce((sum, goal) => sum + Math.min(goal.currentValue, goal.targetAmount), 0)
   );
   const overallCompletionPercent =
     goalsPageData.overview.totalTargetAmount > 0
@@ -78,90 +99,89 @@ function buildGoalsSummary(goalsPageData: Awaited<ReturnType<typeof getGoalsPage
           targetDate: nextGoalNeedingAttention.targetDate,
         }
       : null,
+    goals: goalsPageData.goals.slice(0, 4).map((goal) => ({
+      id: goal.id,
+      name: goal.name,
+      progressPct: goal.progressPct,
+      currentValue: goal.currentValue,
+      targetAmount: goal.targetAmount,
+      targetDate: goal.targetDate,
+    })),
     empty: goalsPageData.goals.length === 0,
   };
 }
 
-function buildStockActivity(
-  dashboard: Awaited<ReturnType<typeof getStockDashboard>>
-): DashboardRecentActivityItem[] {
-  return dashboard.transactions.slice(0, 12).map((transaction) => ({
+function buildActivity(input: AssetInputs & { expenses: ExpenseDashboard | null }) {
+  const stock: DashboardRecentActivityItem[] = input.stocks.transactions.slice(0, 12).map((transaction) => ({
     id: `stock-${transaction.id}`,
     date: transaction.transactionDate,
     assetClassKey: "stocks",
     assetClassLabel: "Stocks",
-    type: transaction.type === "BUY" ? "Stock Buy" : "Stock Sell",
-    name: transaction.symbol,
+    type: transaction.type === "BUY" ? "Bought" : "Sold",
+    name: transaction.symbol.replace(/\.(NS|BO)$/, ""),
     amount:
       transaction.type === "BUY"
         ? transaction.buyNetAmount || transaction.buyGrossAmount || 0
         : transaction.sellNetAmount || transaction.sellGrossAmount || 0,
-    description: transaction.companyName,
-    href: "/stocks",
+    description: `${transaction.quantity} shares @ ₹${transaction.price}`,
+    href: `/stocks/${encodeURIComponent(transaction.symbol)}`,
   }));
-}
-
-function buildMutualFundActivity(
-  dashboard: Awaited<ReturnType<typeof getMutualFundDashboard>>
-): DashboardRecentActivityItem[] {
-  return dashboard.recentTransactions.slice(0, 12).map((transaction) => ({
-    id: `mf-${transaction.id}`,
-    date: transaction.date,
-    assetClassKey: "mutualFunds",
-    assetClassLabel: "Mutual Funds",
-    type: transaction.transactionType === "buy" ? "Mutual Fund Buy" : "Mutual Fund Sell",
-    name: transaction.schemeName,
-    amount: transaction.amount,
-    description: `${transaction.units} units @ ${transaction.nav}`,
-    href: "/mutual-funds",
-  }));
-}
-
-function buildGoldActivity(
-  dashboard: Awaited<ReturnType<typeof getGoldDashboard>>
-): DashboardRecentActivityItem[] {
-  return dashboard.recentActivity.entries.map((entry) => ({
-    id: `gold-${entry.id}`,
-    date: entry.date,
-    assetClassKey: "gold",
-    assetClassLabel: "Gold",
-    type:
-      entry.transactionType === "buy"
-        ? "Gold Buy"
-        : entry.transactionType === "sell"
-          ? "Gold Sell"
-          : "Gold Valuation",
-    name: entry.schemeName,
-    amount: roundCurrency(
-      entry.investedAmount || entry.sellAmount || entry.currentValue || 0
-    ),
-    description: entry.investmentOptionLabel,
-    href: "/gold",
-  }));
-}
-
-function buildCashActivity(
-  dashboard: Awaited<ReturnType<typeof getCashReserveDashboard>>
-): DashboardRecentActivityItem[] {
-  return dashboard.recentActivity.entries.map((entry) => ({
+  const mutualFund: DashboardRecentActivityItem[] = input.mutualFunds.recentTransactions
+    .slice(0, 12)
+    .map((transaction) => ({
+      id: `mf-${transaction.id}`,
+      date: transaction.date,
+      assetClassKey: "mutualFunds",
+      assetClassLabel: "Mutual Funds",
+      type: transaction.transactionType === "buy" ? "Invested" : "Redeemed",
+      name: transaction.schemeName,
+      amount: transaction.amount,
+      description: `${transaction.units} units @ ₹${transaction.nav}`,
+      href: "/mutual-funds",
+    }));
+  // Valuations are price updates, not activity.
+  const gold: DashboardRecentActivityItem[] = input.gold.recentActivity.entries
+    .filter((entry) => entry.transactionType !== "valuation")
+    .map((entry) => ({
+      id: `gold-${entry.id}`,
+      date: entry.date,
+      assetClassKey: "gold",
+      assetClassLabel: "Gold",
+      type: entry.transactionType === "buy" ? "Bought" : "Sold",
+      name: entry.schemeName,
+      amount: roundCurrency(entry.investedAmount || entry.sellAmount || 0),
+      description: entry.investmentOptionLabel,
+      href: "/gold",
+    }));
+  const cash: DashboardRecentActivityItem[] = input.cash.recentActivity.entries.map((entry) => ({
     id: `cash-${entry.id}`,
     date: entry.date,
     assetClassKey: "cash",
-    assetClassLabel: "Cash and Reserves",
-    type: entry.entryType === "credit" ? "Cash Deposit" : "Cash Withdrawal",
+    assetClassLabel: "Cash",
+    type: entry.entryType === "credit" ? "Deposit" : "Withdrawal",
     name: entry.bank,
     amount: entry.amount,
-    description: entry.note || "Cash reserve entry",
+    description: entry.note || "Cash reserve",
     href: "/cash-and-reserves",
   }));
+  const expenses: DashboardRecentActivityItem[] = (input.expenses?.entriesPage.entries || [])
+    .slice(0, 6)
+    .map((entry) => ({
+      id: `expense-${entry.id}`,
+      date: entry.occurredAt,
+      assetClassKey: "expenses",
+      assetClassLabel: "Expenses",
+      type: entry.entryType === "expense" ? "Spent" : "Received",
+      name: entry.note || entry.categoryLabel,
+      amount: entry.amount,
+      description: entry.categoryLabel,
+      href: "/expenses",
+    }));
+
+  return sortRecentActivity([...stock, ...mutualFund, ...gold, ...cash, ...expenses]).slice(0, 12);
 }
 
-function createAssetClassSummaries(input: {
-  stocks: Awaited<ReturnType<typeof getStockDashboard>>;
-  mutualFunds: Awaited<ReturnType<typeof getMutualFundDashboard>>;
-  gold: Awaited<ReturnType<typeof getGoldDashboard>>;
-  cash: Awaited<ReturnType<typeof getCashReserveDashboard>>;
-}) {
+function createAssetClassSummaries(input: AssetInputs): DashboardAssetClassSummary[] {
   const stockValues = calculateGainLossPercent(
     input.stocks.totalCurrentValue,
     input.stocks.totalInvestedAmount
@@ -174,7 +194,10 @@ function createAssetClassSummaries(input: {
     input.gold.totalCurrentValue,
     input.gold.totalInvestedAmount
   );
-  const cashValues = calculateGainLossPercent(input.cash.totalBalance, input.cash.totalBalance);
+  const otherValues = calculateGainLossPercent(
+    input.accounts.totalAssets,
+    input.accounts.totalAssetsInvested
+  );
 
   const assetClasses: DashboardAssetClassSummary[] = [
     {
@@ -192,6 +215,7 @@ function createAssetClassSummaries(input: {
       actionHref: "/stocks",
       detail: input.stocks.lastUpdatedAt,
       realizedProfit: input.stocks.totalRealizedProfit,
+      xirr: input.stocks.xirr,
     },
     {
       key: "mutualFunds",
@@ -200,14 +224,15 @@ function createAssetClassSummaries(input: {
       investedAmount: input.mutualFunds.totalInvestedAmount,
       gainLoss: mutualFundValues.gainLoss,
       gainLossPercent: mutualFundValues.gainLossPercent,
-      todayGainLoss: null,
-      todayGainLossPercent: null,
+      todayGainLoss: input.mutualFunds.totalDayChange,
+      todayGainLossPercent: input.mutualFunds.totalDayChangePct,
       allocationPercent: 0,
       count: input.mutualFunds.holdings.length,
-      stale: false,
+      stale: input.mutualFunds.holdings.some((holding) => holding.isStale),
       actionHref: "/mutual-funds",
-      detail: `${input.mutualFunds.holdings.length} funds`,
+      detail: input.mutualFunds.lastUpdatedAt,
       realizedProfit: input.mutualFunds.totalRealizedProfitAmount,
+      xirr: input.mutualFunds.xirr,
     },
     {
       key: "gold",
@@ -222,46 +247,66 @@ function createAssetClassSummaries(input: {
       count: input.gold.holdings.length,
       stale: false,
       actionHref: "/gold",
-      detail: `${input.gold.holdings.length} holdings`,
+      detail: null,
       realizedProfit: null,
+      xirr: input.gold.xirr,
     },
     {
       key: "cash",
-      label: "Cash and Reserves",
+      label: "Cash",
       currentValue: input.cash.totalBalance,
       investedAmount: input.cash.totalBalance,
-      gainLoss: cashValues.gainLoss,
-      gainLossPercent: cashValues.gainLossPercent,
+      gainLoss: 0,
+      gainLossPercent: 0,
       todayGainLoss: null,
       todayGainLossPercent: null,
       allocationPercent: 0,
       count: input.cash.bankDistribution.length,
       stale: false,
       actionHref: "/cash-and-reserves",
-      detail: `${input.cash.bankDistribution.length} banks`,
+      detail: null,
       realizedProfit: null,
+      xirr: null,
+    },
+    {
+      key: "otherAssets",
+      label: "Other Assets",
+      currentValue: input.accounts.totalAssets,
+      investedAmount: input.accounts.totalAssetsInvested,
+      gainLoss: otherValues.gainLoss,
+      gainLossPercent: otherValues.gainLossPercent,
+      todayGainLoss: null,
+      todayGainLossPercent: null,
+      allocationPercent: 0,
+      count: input.accounts.assets.length,
+      stale: false,
+      actionHref: "/accounts",
+      detail: null,
+      realizedProfit: null,
+      xirr: null,
     },
   ];
-  const totalCurrentWorth = assetClasses.reduce(
-    (sum, assetClass) => sum + assetClass.currentValue,
-    0
-  );
+  const totalAssets = assetClasses.reduce((sum, assetClass) => sum + assetClass.currentValue, 0);
 
   return assetClasses.map((assetClass) => ({
     ...assetClass,
-    allocationPercent: calculateAllocationPercent(assetClass.currentValue, totalCurrentWorth),
+    allocationPercent: calculateAllocationPercent(assetClass.currentValue, totalAssets),
   }));
 }
 
-function buildSummaryFromAssetClasses(assetClasses: DashboardAssetClassSummary[]): DashboardSummary {
-  const totalCurrentWorth = roundCurrency(
+function buildSummary(
+  assetClasses: DashboardAssetClassSummary[],
+  input: AssetInputs
+): DashboardSummary {
+  const totalAssets = roundCurrency(
     assetClasses.reduce((sum, assetClass) => sum + assetClass.currentValue, 0)
   );
+  const totalLiabilities = input.accounts.totalLiabilities;
   const totalInvested = roundCurrency(
     assetClasses.reduce((sum, assetClass) => sum + assetClass.investedAmount, 0)
   );
   const { gainLoss: totalGainLoss, gainLossPercent: totalGainLossPercent } =
-    calculateGainLossPercent(totalCurrentWorth, totalInvested);
+    calculateGainLossPercent(totalAssets, totalInvested);
   const availableToday = assetClasses.filter((assetClass) => assetClass.todayGainLoss != null);
   const todayGainLoss =
     availableToday.length > 0
@@ -270,21 +315,32 @@ function buildSummaryFromAssetClasses(assetClasses: DashboardAssetClassSummary[]
         )
       : null;
   const todayGainLossPercent =
-    todayGainLoss != null && totalCurrentWorth - todayGainLoss > 0
-      ? roundPercent((todayGainLoss / (totalCurrentWorth - todayGainLoss)) * 100)
+    todayGainLoss != null && totalAssets - todayGainLoss > 0
+      ? roundPercent((todayGainLoss / (totalAssets - todayGainLoss)) * 100)
       : null;
+  const marketValue =
+    input.stocks.totalCurrentValue + input.mutualFunds.totalPortfolioValue + input.gold.totalCurrentValue;
+  const xirr = calculateXirr([
+    ...[...input.stocks.cashFlows, ...input.mutualFunds.cashFlows, ...input.gold.cashFlows].map(
+      (flow) => ({ amount: flow.amount, date: new Date(flow.date) })
+    ),
+    ...(marketValue > 0 ? [{ amount: marketValue, date: new Date() }] : []),
+  ]);
   const lastUpdatedAt =
-    assetClasses
-      .filter((assetClass) => assetClass.key === "stocks")
-      .map((assetClass) => assetClass.detail)
-      .find((value): value is string => Boolean(value && /^\d{4}-\d{2}-\d{2}T/.test(value))) ||
-    null;
+    [input.stocks.lastUpdatedAt, input.mutualFunds.lastUpdatedAt]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) || null;
 
   return {
-    totalCurrentWorth,
+    netWorth: roundCurrency(totalAssets - totalLiabilities),
+    totalAssets,
+    totalLiabilities,
+    totalCurrentWorth: totalAssets,
     totalInvested,
     totalGainLoss,
     totalGainLossPercent,
+    xirr,
     todayGainLoss,
     todayGainLossPercent,
     todayMovementAvailableAssetKeys: availableToday.map((assetClass) => assetClass.key),
@@ -296,71 +352,84 @@ function buildSummaryFromAssetClasses(assetClasses: DashboardAssetClassSummary[]
   };
 }
 
-export async function createOrUpdateTodayPortfolioSnapshot(
-  userId: string,
-  snapshot: DashboardSnapshotPayload
-) {
-  const date = getTodayDateKey();
-  const totalAssetKey = getTotalAssetKey();
+function buildMovers(input: AssetInputs) {
+  const movers: DashboardMover[] = [
+    ...input.stocks.holdings
+      .filter((holding) => holding.todayPnL != null)
+      .map((holding) => ({
+        id: `stock-${holding.symbol}`,
+        name: holding.symbol.replace(/\.(NS|BO)$/, ""),
+        subtitle: holding.companyName,
+        assetClassKey: "stocks" as const,
+        href: `/stocks/${encodeURIComponent(holding.symbol)}`,
+        currentValue: holding.currentValue,
+        dayChange: holding.todayPnL || 0,
+        dayChangePercent: holding.todayPnLPercent,
+      })),
+    ...input.mutualFunds.holdings
+      .filter((holding) => holding.dayChange != null)
+      .map((holding) => ({
+        id: `mf-${holding.schemeCode}`,
+        name: holding.schemeName,
+        subtitle: "Mutual fund",
+        assetClassKey: "mutualFunds" as const,
+        href: "/mutual-funds",
+        currentValue: holding.currentValue,
+        dayChange: holding.dayChange || 0,
+        dayChangePercent: holding.dayChangePct ?? null,
+      })),
+  ];
+  const byPercent = (mover: DashboardMover) => mover.dayChangePercent ?? 0;
 
-  await upsertDailyValues([
-    {
-      userId,
-      date,
-      scope: "asset",
-      assetType: "stock",
-      assetKey: totalAssetKey,
-      assetLabel: "Stocks",
-      investedAmount: 0,
-      currentValue: snapshot.stocksValue,
-      source: "system",
-    },
-    {
-      userId,
-      date,
-      scope: "asset",
-      assetType: "mutual_fund",
-      assetKey: totalAssetKey,
-      assetLabel: "Mutual Funds",
-      investedAmount: 0,
-      currentValue: snapshot.mutualFundsValue,
-      source: "system",
-    },
-    {
-      userId,
-      date,
-      scope: "asset",
-      assetType: "gold",
-      assetKey: totalAssetKey,
-      assetLabel: "Gold",
-      investedAmount: 0,
-      currentValue: snapshot.goldValue,
-      source: "system",
-    },
-    {
-      userId,
-      date,
-      scope: "asset",
-      assetType: "cash",
-      assetKey: totalAssetKey,
-      assetLabel: "Cash and Reserves",
-      investedAmount: snapshot.cashValue,
-      currentValue: snapshot.cashValue,
-      source: "system",
-    },
-    {
-      userId,
-      date,
-      scope: "portfolio",
-      assetType: "portfolio",
-      assetKey: totalAssetKey,
-      assetLabel: "Total Portfolio",
-      investedAmount: snapshot.totalInvested,
-      currentValue: snapshot.totalCurrentWorth,
-      gainLoss: snapshot.totalGainLoss,
-      source: "system",
-    },
+  return {
+    gainers: movers
+      .filter((mover) => mover.dayChange > 0)
+      .sort((left, right) => byPercent(right) - byPercent(left))
+      .slice(0, 5),
+    losers: movers
+      .filter((mover) => mover.dayChange < 0)
+      .sort((left, right) => byPercent(left) - byPercent(right))
+      .slice(0, 5),
+  };
+}
+
+function buildCashFlow(expenses: ExpenseDashboard | null): DashboardCashFlowSummary | null {
+  if (!expenses) {
+    return null;
+  }
+
+  return {
+    cycleLabel: expenses.cycle.label,
+    cycleStartDate: expenses.cycle.startDate,
+    cycleEndDate: expenses.cycle.endDate,
+    daysLeft: expenses.cycle.remainingDaysIncludingToday,
+    spent: expenses.cycleSummary.expenseTotal,
+    credits: expenses.cycleSummary.creditTotal,
+    budget: expenses.budget.amount,
+    remainingBudget: expenses.health.remainingBudget,
+    projectedSpend: expenses.health.projectedCycleSpend,
+    status: expenses.health.status,
+    previousCycleSpent: expenses.previousCycleSummary.entryCount
+      ? expenses.previousCycleSummary.expenseTotal
+      : null,
+    topCategories: expenses.categoryBreakdown.slice(0, 4).map((category) => ({
+      key: category.key,
+      label: category.label,
+      amount: category.amount,
+    })),
+  };
+}
+
+async function loadAssetInputs(userId: string): Promise<AssetInputs> {
+  const [stocks, mutualFunds, gold, cash, accounts] = await Promise.all([
+    getStockDashboard(userId),
+    getMutualFundDashboard(userId),
+    getGoldDashboard(userId),
+    getCashReserveDashboard(userId),
+    getAccountsDashboard(userId),
   ]);
+
+  return { stocks, mutualFunds, gold, cash, accounts };
 }
 
 export async function getPortfolioHistory(
@@ -371,19 +440,9 @@ export async function getPortfolioHistory(
 }
 
 export async function saveDailyPortfolioValuesForUser(userId: string) {
-  const [stocks, mutualFunds, gold, cash] = await Promise.all([
-    getStockDashboard(userId),
-    getMutualFundDashboard(userId),
-    getGoldDashboard(userId),
-    getCashReserveDashboard(userId),
-  ]);
-  const assetClasses = createAssetClassSummaries({
-    stocks,
-    mutualFunds,
-    gold,
-    cash,
-  });
-  const summary = buildSummaryFromAssetClasses(assetClasses);
+  const inputs = await loadAssetInputs(userId);
+  const assetClasses = createAssetClassSummaries(inputs);
+  const summary = buildSummary(assetClasses, inputs);
   const totalAssetKey = getTotalAssetKey();
   const date = getTodayDateKey();
 
@@ -392,12 +451,7 @@ export async function saveDailyPortfolioValuesForUser(userId: string) {
       userId,
       date,
       scope: "asset" as const,
-      assetType:
-        assetClass.key === "mutualFunds"
-          ? ("mutual_fund" as const)
-          : assetClass.key === "stocks"
-            ? ("stock" as const)
-            : assetClass.key,
+      assetType: SNAPSHOT_ASSET_TYPES[assetClass.key],
       assetKey: totalAssetKey,
       assetLabel: assetClass.label,
       investedAmount: assetClass.investedAmount,
@@ -408,12 +462,24 @@ export async function saveDailyPortfolioValuesForUser(userId: string) {
     {
       userId,
       date,
+      scope: "asset" as const,
+      assetType: "liability" as const,
+      assetKey: totalAssetKey,
+      assetLabel: "Liabilities",
+      investedAmount: 0,
+      currentValue: summary.totalLiabilities,
+      gainLoss: 0,
+      source: "system" as const,
+    },
+    {
+      userId,
+      date,
       scope: "portfolio" as const,
       assetType: "portfolio" as const,
       assetKey: totalAssetKey,
-      assetLabel: "Total Portfolio",
+      assetLabel: "Net Worth",
       investedAmount: summary.totalInvested,
-      currentValue: summary.totalCurrentWorth,
+      currentValue: summary.netWorth,
       gainLoss: summary.totalGainLoss,
       source: "system" as const,
     },
@@ -427,24 +493,38 @@ export async function saveDailyPortfolioValuesForUser(userId: string) {
 }
 
 export async function getDashboard(user: SafeUser): Promise<DashboardData> {
-  const [stocks, mutualFunds, gold, cash, goals] = await Promise.all([
-    getStockDashboard(user.id),
-    getMutualFundDashboard(user.id),
-    getGoldDashboard(user.id),
-    getCashReserveDashboard(user.id),
-    getGoalsPageData(user),
+  const [inputs, expenses, history, sync] = await Promise.all([
+    loadAssetInputs(user.id),
+    getExpenseDashboard(user.id).catch(() => null),
+    getPortfolioHistoryFromDailyValues(user.id, "ALL"),
+    getMarketSyncStatus(user.id),
   ]);
-
-  const assetClasses = createAssetClassSummaries({
-    stocks,
-    mutualFunds,
-    gold,
-    cash,
+  const goals = await getGoalsPageData(user, {
+    cash: inputs.cash,
+    gold: inputs.gold,
+    mutualFunds: inputs.mutualFunds,
+    stocks: inputs.stocks,
   });
-  const summary = buildSummaryFromAssetClasses(assetClasses);
-  const goalsSummary = buildGoalsSummary(goals);
 
-  const history = await getPortfolioHistory(user.id, DEFAULT_HISTORY_RANGE);
+  const assetClasses = createAssetClassSummaries(inputs);
+  const summary = buildSummary(assetClasses, inputs);
+  const goalsSummary = buildGoalsSummary(goals);
+  const todayKey = getTodayDateKey();
+  // Today's point reflects live values even before the snapshot job runs.
+  const liveHistory = [
+    ...history.filter((point) => point.date !== todayKey),
+    {
+      date: todayKey,
+      totalValue: summary.netWorth,
+      stocksValue: inputs.stocks.totalCurrentValue,
+      mutualFundsValue: inputs.mutualFunds.totalPortfolioValue,
+      goldValue: inputs.gold.totalCurrentValue,
+      cashValue: inputs.cash.totalBalance,
+      otherAssetsValue: inputs.accounts.totalAssets,
+      liabilitiesValue: inputs.accounts.totalLiabilities,
+    },
+  ];
+  const periodChanges = buildPeriodChanges(liveHistory, todayKey);
   const allocation = attachAllocationPercent(
     assetClasses.map((assetClass) => ({
       key: assetClass.key,
@@ -452,38 +532,45 @@ export async function getDashboard(user: SafeUser): Promise<DashboardData> {
       currentValue: assetClass.currentValue,
     }))
   );
-  const recentActivity = sortRecentActivity([
-    ...buildStockActivity(stocks),
-    ...buildMutualFundActivity(mutualFunds),
-    ...buildGoldActivity(gold),
-    ...buildCashActivity(cash),
-  ]).slice(0, 12);
+  const cashFlow = buildCashFlow(expenses);
   const empty = assetClasses.every((assetClass) => assetClass.currentValue <= 0);
 
   return {
     summary,
     assetClasses,
     allocation,
-    recentActivity,
+    periodChanges,
+    movers: buildMovers(inputs),
+    cashFlow,
+    liabilities: {
+      total: inputs.accounts.totalLiabilities,
+      monthlyPayments: inputs.accounts.totalMonthlyPayments,
+      count: inputs.accounts.liabilities.length,
+      items: inputs.accounts.liabilities.slice(0, 4).map((account) => ({
+        id: account.id,
+        name: account.name,
+        categoryLabel: account.categoryLabel,
+        outstanding: account.currentValue,
+      })),
+    },
+    recentActivity: buildActivity({ ...inputs, expenses }),
     goalsSummary,
     insights: buildDashboardInsights({
       empty,
       hasStaleData: summary.hasStaleData,
-      summary: {
-        totalGainLoss: summary.totalGainLoss,
-        totalGainLossPercent: summary.totalGainLossPercent,
-        totalCurrentWorth: summary.totalCurrentWorth,
-      },
+      summary,
       allocation,
       assetClasses,
       goalsSummary,
+      cashFlow,
+      periodChanges,
+      syncFailedCount: sync.syncedToday ? sync.failedCount : 0,
     }),
-    history,
+    history: liveHistory,
     historyRange: DEFAULT_HISTORY_RANGE,
+    sync,
     empty,
   };
 }
 
-export async function refreshDashboard(user: SafeUser) {
-  return getDashboard(user);
-}
+export { filterHistoryByRange };

@@ -30,10 +30,13 @@ function resolveChartPeriod(range: string) {
       return { period1, interval: "1d" as const };
     case "6mo":
       period1.setMonth(period1.getMonth() - 6);
-      return { period1, interval: "1wk" as const };
+      return { period1, interval: "1d" as const };
     case "1y":
       period1.setFullYear(period1.getFullYear() - 1);
-      return { period1, interval: "1mo" as const };
+      return { period1, interval: "1d" as const };
+    case "5y":
+      period1.setFullYear(period1.getFullYear() - 5);
+      return { period1, interval: "1wk" as const };
     default:
       period1.setMonth(period1.getMonth() - 6);
       return { period1, interval: "1wk" as const };
@@ -143,7 +146,10 @@ export async function getBulkQuotes(symbols: string[]) {
 
   return Object.fromEntries(
     await Promise.all(
-      symbols.map(async (symbol) => [symbol, await getStockQuote(symbol)] as const)
+      // One bad ticker must not fail the whole batch.
+      symbols.map(
+        async (symbol) => [symbol, await getStockQuote(symbol).catch(() => null)] as const
+      )
     )
   ) as Record<string, StockQuote | null>;
 }

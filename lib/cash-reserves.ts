@@ -4,9 +4,12 @@ import { Types } from "mongoose";
 
 import { connectToDatabase } from "@/lib/mongodb";
 import { CashReserveEntry } from "@/lib/models/cash-reserve-entry";
+import { validateLedgerChange, describeViolation, type LedgerChange, type LedgerEntry } from "@/lib/cash-reserves-validation";
 import type {
   CashReserveBankDistribution,
   CashReserveDashboardData,
+  CashReserveEntrySummary,
+  CashReserveEntryType,
   CashReserveMonthSummary,
   CashReserveRecentActivityFilters,
   CashReserveRecentActivityPage,
@@ -33,6 +36,10 @@ function getMonthStarts(count: number) {
       1
     );
   });
+}
+
+function dateKeyOf(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function getMonthLabel(date: Date) {
@@ -171,6 +178,7 @@ export async function getCashReserveRecentActivity(
       entryType: entry.entryType,
       bank: entry.bank || "Unassigned",
       note: entry.note || "",
+      dateKey: dateKeyOf(new Date(entry.entryDate)),
     })),
     page: safePage,
     pageSize,
@@ -193,10 +201,11 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     .sort({ entryDate: 1, createdAt: 1 })
     .lean();
 
-  const monthStarts = getMonthStarts(6);
+  const monthStarts = getMonthStarts(12);
   const windowStart = monthStarts[0];
   const monthMap = new Map<string, { credits: number; debits: number; net: number }>();
   const bankMap = new Map<string, number>();
+  const lastMovement = new Map<string, { date: Date; amount: number; type: CashReserveEntryType }>();
   let openingBalance = 0;
 
   for (const entry of entries) {
@@ -205,6 +214,7 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     const bank = entry.bank || "Unassigned";
 
     bankMap.set(bank, (bankMap.get(bank) || 0) + signedAmount);
+    lastMovement.set(bank, { date: entryDate, amount: entry.amount, type: entry.entryType });
 
     if (entryDate < windowStart) {
       openingBalance += signedAmount;
@@ -225,7 +235,7 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
   }
 
   let runningBalance = openingBalance;
-  const months: CashReserveMonthSummary[] = monthStarts.map((start) => {
+  const history: CashReserveMonthSummary[] = monthStarts.map((start) => {
     const key = monthKey(start);
     const bucket = monthMap.get(key) || { credits: 0, debits: 0, net: 0 };
 
@@ -234,6 +244,7 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     return {
       key,
       label: getMonthLabel(start),
+      longLabel: `${getMonthLabel(start)} ${String(start.getFullYear()).slice(2)}`,
       credits: roundCurrency(bucket.credits),
       debits: roundCurrency(bucket.debits),
       net: roundCurrency(bucket.net),
@@ -241,6 +252,7 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     };
   });
 
+  const months = history.slice(-6);
   const totalBalance = months.length
     ? months[months.length - 1].closingBalance
     : roundCurrency(openingBalance);
@@ -258,6 +270,9 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     .map(([bank, balance]) => ({
       bank,
       balance: roundCurrency(balance),
+      lastMovementDate: lastMovement.get(bank)?.date.toISOString() ?? null,
+      lastMovementAmount: lastMovement.get(bank)?.amount ?? null,
+      lastMovementType: lastMovement.get(bank)?.type ?? null,
       percentage:
         distributionDenominator > 0
           ? roundCurrency((Math.abs(balance) / distributionDenominator) * 100)
@@ -266,6 +281,18 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     .filter((entry) => entry.balance !== 0)
     .sort((first, second) => Math.abs(second.balance) - Math.abs(first.balance));
 
+  const allEntries: CashReserveEntrySummary[] = [...entries]
+    .reverse()
+    .slice(0, 1000)
+    .map((entry) => ({
+      id: String(entry._id),
+      date: new Date(entry.entryDate).toISOString(),
+      amount: roundCurrency(entry.amount),
+      entryType: entry.entryType,
+      bank: entry.bank || "Unassigned",
+      note: entry.note || "",
+      dateKey: dateKeyOf(new Date(entry.entryDate)),
+    }));
   const recentActivity = await getCashReserveRecentActivity(userId, {
     page: 1,
     pageSize: RECENT_ACTIVITY_PAGE_SIZE,
@@ -278,5 +305,93 @@ export async function getCashReserveDashboard(userId: string): Promise<CashReser
     bankDistribution,
     months,
     recentActivity,
+    history,
+    allEntries,
+    lastActivityDate: allEntries[0]?.date ?? null,
   };
+}
+
+export class CashReserveChangeError extends Error {
+  constructor(
+    message: string,
+    public status = 400
+  ) {
+    super(message);
+  }
+}
+
+async function loadLedger(userId: string): Promise<LedgerEntry[]> {
+  const entries = await CashReserveEntry.find({ userId }).lean();
+
+  return entries.map((entry) => ({
+    id: String(entry._id),
+    dateKey: dateKeyOf(new Date(entry.entryDate)),
+    amount: entry.amount,
+    entryType: entry.entryType,
+    bank: entry.bank || "Unassigned",
+  }));
+}
+
+/** Throws CashReserveChangeError if the change would push a bank below zero at any date. */
+export async function assertLedgerChangeAllowed(userId: string, change: LedgerChange) {
+  await connectToDatabase();
+  const violation = validateLedgerChange(await loadLedger(userId), change);
+
+  if (violation) {
+    throw new CashReserveChangeError(describeViolation(violation));
+  }
+}
+
+export async function updateCashReserveEntry(
+  userId: string,
+  entryId: string,
+  input: { dateKey: string; amount: number; entryType: CashReserveEntryType; bank: string; note: string }
+) {
+  await connectToDatabase();
+
+  if (!Types.ObjectId.isValid(entryId)) {
+    throw new CashReserveChangeError("Entry not found.", 404);
+  }
+
+  const existing = await CashReserveEntry.findOne({ _id: entryId, userId }).lean();
+
+  if (!existing) {
+    throw new CashReserveChangeError("Entry not found.", 404);
+  }
+
+  const entryDate = parseDateOnly(input.dateKey);
+
+  if (!entryDate) {
+    throw new CashReserveChangeError("Please provide a valid date.");
+  }
+
+  const amount = roundCurrency(input.amount);
+
+  await assertLedgerChangeAllowed(userId, {
+    kind: "update",
+    id: entryId,
+    entry: { dateKey: input.dateKey, amount, entryType: input.entryType, bank: input.bank },
+  });
+
+  await CashReserveEntry.updateOne(
+    { _id: entryId, userId },
+    { $set: { entryDate, amount, entryType: input.entryType, bank: input.bank, note: input.note } }
+  );
+}
+
+export async function deleteCashReserveEntry(userId: string, entryId: string) {
+  await connectToDatabase();
+
+  if (!Types.ObjectId.isValid(entryId)) {
+    throw new CashReserveChangeError("Entry not found.", 404);
+  }
+
+  const existing = await CashReserveEntry.findOne({ _id: entryId, userId }).lean();
+
+  if (!existing) {
+    throw new CashReserveChangeError("Entry not found.", 404);
+  }
+
+  await assertLedgerChangeAllowed(userId, { kind: "delete", id: entryId });
+  await CashReserveEntry.deleteOne({ _id: entryId, userId });
 }

@@ -10,6 +10,7 @@ type ExpenseCreateBody = {
   entryType?: ExpenseEntryType;
   amount?: number | string;
   note?: string;
+  category?: string;
   occurredAt?: string;
 };
 
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
       entryType: body?.entryType as ExpenseEntryType,
       amount,
       note: body?.note,
+      category: body?.category,
       occurredAt: String(body?.occurredAt || ""),
     });
 

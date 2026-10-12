@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { runMarketSync } from "@/lib/market-sync";
+
 import { getTokenFromRequest } from "@/lib/api-auth";
 import { verifyAuthToken } from "@/lib/auth";
 import { getStockDashboard, saveStockBuyTransaction } from "@/lib/stocks";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const session = await verifyAuthToken(getTokenFromRequest(request));
@@ -41,6 +44,11 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  // Price the changed position right away and refresh today's net-worth snapshot.
+  await runMarketSync({ userId: session.sub, assetType: "stock", source: "manual" }).catch(
+    () => null
+  );
 
   const dashboard = await getStockDashboard(session.sub);
   return NextResponse.json(

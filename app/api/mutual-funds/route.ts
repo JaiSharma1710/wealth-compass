@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 
+import { runMarketSync } from "@/lib/market-sync";
+
 import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth";
 import {
+  deleteMutualFundTransaction,
   getMutualFundDashboard,
   saveMutualFundTransaction,
 } from "@/lib/mutual-funds";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 type MutualFundTransactionBody = {
   schemeCode?: number | string;
@@ -97,6 +101,11 @@ export async function POST(request: Request) {
     );
   }
 
+  // Price the changed position right away and refresh today's net-worth snapshot.
+  await runMarketSync({ userId: session.sub, assetType: "mutual_fund", source: "manual" }).catch(
+    () => null
+  );
+
   const dashboard = await getMutualFundDashboard(session.sub);
 
   return NextResponse.json(
@@ -109,4 +118,35 @@ export async function POST(request: Request) {
     },
     { status: 201 }
   );
+}
+
+export async function DELETE(request: Request) {
+  const session = await verifyAuthToken(getTokenFromRequest(request));
+
+  if (!session?.sub) {
+    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
+  const id = new URL(request.url).searchParams.get("id")?.trim() || "";
+
+  if (!/^[a-f0-9]{24}$/i.test(id)) {
+    return NextResponse.json({ message: "Invalid transaction." }, { status: 400 });
+  }
+
+  try {
+    await deleteMutualFundTransaction(session.sub, id);
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "Unable to delete transaction." },
+      { status: 400 }
+    );
+  }
+
+  await runMarketSync({ userId: session.sub, assetType: "mutual_fund", source: "manual" }).catch(
+    () => null
+  );
+
+  const dashboard = await getMutualFundDashboard(session.sub);
+
+  return NextResponse.json({ message: "Transaction deleted.", dashboard });
 }

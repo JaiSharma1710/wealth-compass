@@ -1,33 +1,22 @@
 import Link from "next/link";
 import { Compass } from "lucide-react";
 
-import { buttonVariants } from "@/components/ui/button";
-
+/** Centred, token-based shell for login / signup. Safe-area aware. */
 export function PublicShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-svh bg-[radial-gradient(circle_at_top,_var(--color-muted),_transparent_32%),linear-gradient(180deg,var(--color-background),color-mix(in_oklab,var(--color-muted)_35%,white))] text-foreground">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-        <Link className="flex items-center gap-3" href="/">
-          <div className="flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-            <Compass className="size-5" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">
-              Personal Finance OS
-            </p>
-            <p className="text-lg font-semibold tracking-tight">Wealth Compass</p>
-          </div>
+    <div className="flex min-h-svh flex-col bg-canvas px-4 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] text-ink">
+      <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center py-6">
+        <Link className="mx-auto mb-8 flex flex-col items-center gap-3" href="/">
+          <span className="flex size-14 items-center justify-center rounded-2xl bg-cta text-cta-ink shadow-[0_8px_24px_rgba(16,24,40,0.18)]">
+            <Compass className="size-7" />
+          </span>
+          <span className="text-center">
+            <span className="block text-xl font-semibold tracking-tight">Wealth Compass</span>
+            <span className="mt-0.5 block text-sm text-ink-3">Your complete money picture</span>
+          </span>
         </Link>
-        <nav className="flex items-center gap-2">
-          <Link className={buttonVariants({ variant: "ghost" })} href="/login">
-            Log in
-          </Link>
-          <Link className={buttonVariants({ variant: "default" })} href="/signup">
-            Get started
-          </Link>
-        </nav>
-      </header>
-      {children}
+        {children}
+      </main>
     </div>
   );
 }

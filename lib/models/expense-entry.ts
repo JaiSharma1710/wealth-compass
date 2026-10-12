@@ -26,6 +26,13 @@ const expenseEntrySchema = new Schema(
       trim: true,
       maxlength: 500,
     },
+    // Empty means "infer from note" (see lib/expense-categories.ts).
+    category: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 40,
+    },
     occurredAt: {
       type: Date,
       required: true,
@@ -43,7 +50,7 @@ expenseEntrySchema.index({ userId: 1, occurredAt: -1, createdAt: -1 });
 export type ExpenseEntryDocument = InferSchemaType<typeof expenseEntrySchema>;
 
 function hasCurrentExpenseEntrySchema(existingModel: Model<ExpenseEntryDocument>) {
-  return ["entryType", "note", "occurredAt"].every((path) => existingModel.schema.path(path));
+  return ["entryType", "note", "occurredAt", "category"].every((path) => existingModel.schema.path(path));
 }
 
 const existingExpenseEntryModel =

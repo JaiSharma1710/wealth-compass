@@ -184,3 +184,34 @@ export function calculateNextSellLifecycleState(input: {
     investedAmount,
   };
 }
+
+/**
+ * Replays transactions in date order and returns the first SELL that sells more than
+ * was held at that moment (e.g. after deleting the BUY it relied on), or null.
+ */
+export function findFirstOversell<
+  T extends { symbol: string; type: "BUY" | "SELL"; quantity: number; transactionDate: Date | string; createdAt?: Date | string }
+>(transactions: T[]): T | null {
+  const held = new Map<string, number>();
+  const ordered = [...transactions].sort((left, right) => {
+    const byDate = new Date(left.transactionDate).getTime() - new Date(right.transactionDate).getTime();
+    return byDate || new Date(left.createdAt || 0).getTime() - new Date(right.createdAt || 0).getTime();
+  });
+
+  for (const transaction of ordered) {
+    const current = held.get(transaction.symbol) || 0;
+
+    if (transaction.type === "BUY") {
+      held.set(transaction.symbol, current + transaction.quantity);
+      continue;
+    }
+
+    if (transaction.quantity > current + 1e-6) {
+      return transaction;
+    }
+
+    held.set(transaction.symbol, current - transaction.quantity);
+  }
+
+  return null;
+}

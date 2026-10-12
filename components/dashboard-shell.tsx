@@ -7,19 +7,22 @@ import type { LucideIcon } from "lucide-react";
 import {
   Coins,
   Compass,
-  ClipboardCheck,
   LayoutDashboard,
-  Landmark,
   LineChart,
   LogOut,
-  Menu,
+  Moon,
+  MoreHorizontal,
   PieChart,
+  ReceiptText,
+  Scale,
   Settings,
+  Sun,
   Target,
   Wallet,
-  X,
 } from "lucide-react";
 
+import { SyncStatus } from "@/components/sync-status";
+import { Sheet } from "@/components/ui/sheet";
 import type { SafeUser } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
@@ -27,33 +30,58 @@ type NavItem = {
   href: string;
   icon: LucideIcon;
   label: string;
+  /** Short label for the phone tab bar. */
+  short?: string;
 };
 
-const navItems: NavItem[] = [
-  { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/market-approvals", icon: ClipboardCheck, label: "Market Approvals" },
-  { href: "/stocks", icon: LineChart, label: "Stocks" },
-  { href: "/mutual-funds", icon: PieChart, label: "Mutual Funds" },
-  { href: "/gold", icon: Coins, label: "Gold" },
-  { href: "/expenses", icon: Landmark, label: "Expense Tracker" },
-  { href: "/cash-and-reserves", icon: Wallet, label: "Cash and Reserves" },
-  { href: "/goals", icon: Target, label: "Goals" },
-  { href: "/settings", icon: Settings, label: "Settings" },
+const navGroups: Array<{ title: string | null; items: NavItem[] }> = [
+  {
+    title: null,
+    items: [{ href: "/dashboard", icon: LayoutDashboard, label: "Overview", short: "Home" }],
+  },
+  {
+    title: "Investments",
+    items: [
+      { href: "/stocks", icon: LineChart, label: "Stocks", short: "Stocks" },
+      { href: "/mutual-funds", icon: PieChart, label: "Mutual Funds", short: "Funds" },
+      { href: "/gold", icon: Coins, label: "Gold" },
+    ],
+  },
+  {
+    title: "Money",
+    items: [
+      { href: "/expenses", icon: ReceiptText, label: "Expenses", short: "Spends" },
+      { href: "/cash-and-reserves", icon: Wallet, label: "Cash & Savings" },
+      { href: "/accounts", icon: Scale, label: "Other Assets & Loans" },
+    ],
+  },
+  {
+    title: "Planning",
+    items: [
+      { href: "/goals", icon: Target, label: "Goals" },
+      { href: "/settings", icon: Settings, label: "Settings" },
+    ],
+  },
 ];
 
-export function DashboardShell({
-  children,
-  user,
-}: {
-  children: React.ReactNode;
-  user: SafeUser;
-}) {
+const allItems = navGroups.flatMap((group) => group.items);
+const tabItems = ["/dashboard", "/stocks", "/mutual-funds", "/expenses"].map(
+  (href) => allItems.find((item) => item.href === href)!
+);
+const moreItems = allItems.filter((item) => !tabItems.includes(item));
+
+function isActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+export function DashboardShell({ children, user }: { children: React.ReactNode; user: SafeUser }) {
   const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const initials = useMemo(() => getInitials(user.fullName), [user.fullName]);
-  const pageTitle = useMemo(() => getPageTitle(pathname), [pathname]);
+  const current = allItems.find((item) => isActive(pathname, item.href));
+  const moreActive = moreItems.some((item) => isActive(pathname, item.href));
 
   useEffect(() => {
     function handlePointerDown(event: MouseEvent) {
@@ -62,130 +90,103 @@ export function DashboardShell({
       }
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setAccountMenuOpen(false);
-      }
-    }
-
     document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
+    return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
   return (
-    <div className="wc-protected min-h-svh bg-[linear-gradient(180deg,#f7f7f4_0%,#edf1ea_100%)]">
-      {mobileOpen ? (
-        <button
-          aria-label="Close sidebar overlay"
-          className="fixed inset-0 z-30 bg-black/25 md:hidden"
-          onClick={() => setMobileOpen(false)}
-          type="button"
-        />
-      ) : null}
+    <div className="min-h-svh bg-canvas">
+      {/* Desktop sidebar */}
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-line bg-surface md:flex">
+        <Link href="/dashboard" className="flex h-16 items-center gap-2.5 px-5">
+          <span className="flex size-9 items-center justify-center rounded-xl bg-cta text-cta-ink">
+            <Compass className="size-[1.1rem]" />
+          </span>
+          <span className="text-[0.95rem] font-semibold tracking-tight text-ink">Wealth Compass</span>
+        </Link>
+        <nav className="flex-1 overflow-y-auto px-3 pb-4" aria-label="Main">
+          {navGroups.map((group, index) => (
+            <div key={group.title || index} className="mt-4 first:mt-1">
+              {group.title ? (
+                <p className="mb-1 px-3 text-[0.68rem] font-semibold tracking-[0.08em] text-ink-3 uppercase">
+                  {group.title}
+                </p>
+              ) : null}
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(pathname, item.href);
 
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-[16.5rem] flex-col border-r border-[#e6ebf2] bg-white transition-transform duration-300",
-          mobileOpen ? "translate-x-0" : "-translate-x-[115%] md:translate-x-0",
-        )}
-      >
-        <div className="flex h-[4.5rem] items-center border-b border-[#e6ebf2] px-8">
-          <Link
-            className="flex min-w-0 items-center gap-3"
-            href="/dashboard"
-            onClick={() => setMobileOpen(false)}
-          >
-            <BankDashLogo />
-          </Link>
-        </div>
-
-        <button
-          aria-label="Close navigation"
-          className="absolute right-4 top-7 flex size-10 items-center justify-center rounded-2xl border border-black/5 text-neutral-500 transition hover:bg-neutral-100 md:hidden"
-          onClick={() => setMobileOpen(false)}
-          type="button"
-        >
-          <X className="size-4" />
-        </button>
-
-        <nav className="flex flex-1 flex-col px-5 py-6">
-          <div className="flex flex-col gap-1.5">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = pathname === item.href;
-
-              return (
-                <Link
-                  key={item.href}
-                  className={cn(
-                    "relative flex items-center gap-3 rounded-2xl px-5 py-3 text-[1.02rem] font-medium text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-950",
-                    active && "bg-[#f2f5ef] text-neutral-950",
-                  )}
-                  href={item.href}
-                  onClick={() => setMobileOpen(false)}
-                >
-                  <span
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
                     className={cn(
-                      "absolute left-[-1.25rem] top-1/2 h-11 w-1 -translate-y-1/2 rounded-r-full bg-transparent transition-colors",
-                      active && "bg-[#111111]",
+                      "mb-0.5 flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition",
+                      active ? "bg-brand-soft text-brand-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"
                     )}
-                  />
-                  <Icon className="size-5 shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
+                  >
+                    <Icon className="size-[1.05rem] shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </aside>
 
-      <div className="min-h-svh md:pl-[16.5rem]">
-        <header className="sticky top-0 z-20 flex h-[4.5rem] items-center justify-between border-b border-[#e6ebf2] bg-white px-5 sm:px-8">
-          <div className="flex items-center gap-4">
-            <button
-              aria-label="Open navigation"
-              className="flex size-10 items-center justify-center rounded-2xl border border-black/5 bg-white text-neutral-600 shadow-sm transition hover:bg-neutral-100 md:hidden"
-              onClick={() => setMobileOpen(true)}
-              type="button"
-            >
-              <Menu className="size-5" />
-            </button>
-            <h1 className="text-[1.5rem] font-semibold tracking-tight text-neutral-950 sm:text-[1.7rem]">
-              {pageTitle}
+      <div className="flex h-svh flex-col md:pl-60">
+        <header className="z-30 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface/90 px-4 backdrop-blur sm:px-6 md:h-16 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-cta text-cta-ink md:hidden">
+              <Compass className="size-4" />
+            </span>
+            <h1 className="truncate text-base font-semibold tracking-tight text-ink md:text-lg">
+              {current?.label || "Overview"}
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-sm font-semibold text-neutral-950">{user.fullName}</p>
-              <p className="text-xs text-neutral-500">Primary account</p>
-            </div>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <SyncStatus />
+            <ThemeToggle />
             <div className="relative" ref={accountMenuRef}>
               <button
                 aria-expanded={accountMenuOpen}
                 aria-haspopup="menu"
-                aria-label="Open account menu"
-                className="flex size-12 items-center justify-center rounded-full bg-[#111111] text-sm font-semibold text-white transition hover:opacity-90"
-                onClick={() => setAccountMenuOpen((current) => !current)}
+                aria-label="Account menu"
+                className="flex size-9 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-ink transition hover:bg-line"
+                onClick={() => setAccountMenuOpen((open) => !open)}
                 type="button"
               >
                 {initials}
               </button>
 
               {accountMenuOpen ? (
-                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-30 min-w-44 rounded-2xl border border-[#e6ebf2] bg-white p-2 shadow-[0_18px_48px_rgba(15,23,42,0.12)]">
+                <div
+                  role="menu"
+                  className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-56 rounded-2xl border border-line bg-surface p-1.5 shadow-xl"
+                >
+                  <div className="px-3 py-2">
+                    <p className="truncate text-sm font-semibold text-ink">{user.fullName}</p>
+                    <p className="truncate text-xs text-ink-3">{user.email}</p>
+                  </div>
+                  <div className="my-1 h-px bg-line" />
+                  <Link
+                    href="/settings"
+                    role="menuitem"
+                    onClick={() => setAccountMenuOpen(false)}
+                    className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-ink-2 transition hover:bg-surface-2 hover:text-ink"
+                  >
+                    <Settings className="size-4" /> Settings
+                  </Link>
                   <form action="/api/signout" method="post">
                     <button
-                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 hover:text-neutral-950"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm text-ink-2 transition hover:bg-surface-2 hover:text-loss"
                       type="submit"
                     >
-                      <LogOut className="size-4 shrink-0" />
-                      <span>Logout</span>
+                      <LogOut className="size-4" /> Log out
                     </button>
                   </form>
                 </div>
@@ -194,37 +195,117 @@ export function DashboardShell({
           </div>
         </header>
 
-        <main className="h-[calc(100svh-4.5rem)]">{children}</main>
+        <main className="min-h-0 flex-1">{children}</main>
       </div>
+
+      {/* Phone tab bar */}
+      <nav
+        aria-label="Main"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+      >
+        <div className="grid grid-cols-5">
+          {tabItems.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(pathname, item.href);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "flex h-14 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-medium transition",
+                  active ? "text-brand" : "text-ink-3"
+                )}
+              >
+                <Icon className="size-5" />
+                {item.short || item.label}
+              </Link>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setMoreOpen(true)}
+            className={cn(
+              "flex h-14 flex-col items-center justify-center gap-0.5 text-[0.68rem] font-medium transition",
+              moreActive ? "text-brand" : "text-ink-3"
+            )}
+          >
+            <MoreHorizontal className="size-5" />
+            More
+          </button>
+        </div>
+      </nav>
+
+      <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More" size="sm">
+        <div className="grid grid-cols-3 gap-2 pb-2">
+          {moreItems.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(pathname, item.href);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setMoreOpen(false)}
+                className={cn(
+                  "flex flex-col items-center gap-2 rounded-2xl border px-2 py-4 text-center text-xs font-medium transition",
+                  active ? "border-brand/30 bg-brand-soft text-brand-ink" : "border-line text-ink-2 active:bg-surface-2"
+                )}
+              >
+                <Icon className="size-5" />
+                {item.label}
+              </Link>
+            );
+          })}
+          <form action="/api/signout" method="post" className="contents">
+            <button
+              type="submit"
+              className="flex flex-col items-center gap-2 rounded-2xl border border-line px-2 py-4 text-xs font-medium text-ink-2 active:bg-surface-2"
+            >
+              <LogOut className="size-5" />
+              Log out
+            </button>
+          </form>
+        </div>
+      </Sheet>
     </div>
   );
 }
 
-function BankDashLogo() {
-  return (
-    <>
-      <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-[#111111] text-white shadow-sm">
-        <Compass className="size-5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-lg leading-tight font-semibold tracking-tight text-neutral-950">
-          Wealth Compass
-        </p>
-      </div>
-    </>
-  );
-}
+function ThemeToggle() {
+  const [dark, setDark] = useState<boolean | null>(null);
 
-function getPageTitle(pathname: string) {
-  if (pathname === "/dashboard") {
-    return "Overview";
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDark(document.documentElement.classList.contains("dark")), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function toggle() {
+    const next = !document.documentElement.classList.contains("dark");
+    document.documentElement.classList.toggle("dark", next);
+    try {
+      localStorage.setItem("theme", next ? "dark" : "light");
+    } catch {}
+    setDark(next);
   }
 
-  return navItems.find((item) => item.href === pathname)?.label ?? "Overview";
+  const Icon = dark ? Sun : Moon;
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+      className="flex size-9 items-center justify-center rounded-xl text-ink-2 transition hover:bg-surface-2 hover:text-ink"
+    >
+      <Icon className="size-[1.05rem]" />
+    </button>
+  );
 }
 
 function getInitials(fullName: string) {
   const [first = "", second = ""] = fullName.trim().split(/\s+/);
-
   return `${first.charAt(0)}${second.charAt(0)}`.toUpperCase() || "WC";
 }
+

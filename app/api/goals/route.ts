@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME, buildPublicUser, verifyAuthToken } from "@/lib/auth";
-import { createGoal, deleteGoal, getGoalsPageData } from "@/lib/goals";
-import type { GoalAssetType } from "@/lib/goals.types";
+import { createGoal, deleteGoal, getGoalsPageData, updateGoal } from "@/lib/goals";
+import type { GoalAssetType, GoalLinkInput } from "@/lib/goals.types";
 import { connectToDatabase } from "@/lib/mongodb";
 import { User } from "@/lib/models/user";
 
@@ -13,9 +13,31 @@ type GoalCreateBody = {
   note?: string;
   targetAmount?: number | string;
   targetDate?: string;
+  links?: GoalLinkInput[];
+  /** Legacy single-link shape. */
   assetType?: GoalAssetType;
   investmentId?: string;
 };
+
+function toSaveInput(body: GoalCreateBody | null) {
+  const targetAmount =
+    typeof body?.targetAmount === "number"
+      ? body.targetAmount
+      : Number(String(body?.targetAmount || "").trim());
+  const links =
+    body?.links ??
+    (body?.assetType && body?.investmentId
+      ? [{ assetType: body.assetType, investmentId: body.investmentId }]
+      : []);
+
+  return {
+    name: body?.name || "",
+    note: body?.note || "",
+    targetAmount,
+    targetDate: body?.targetDate || "",
+    links,
+  };
+}
 
 function getTokenFromRequest(request: Request) {
   return request.headers.get("cookie")
@@ -61,20 +83,9 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => null)) as GoalCreateBody | null;
-  const targetAmount =
-    typeof body?.targetAmount === "number"
-      ? body.targetAmount
-      : Number(String(body?.targetAmount || "").trim());
 
   try {
-    await createGoal(user, {
-      name: body?.name || "",
-      note: body?.note || "",
-      targetAmount,
-      targetDate: body?.targetDate || "",
-      assetType: body?.assetType || "stock",
-      investmentId: body?.investmentId || "",
-    });
+    await createGoal(user, toSaveInput(body));
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "Unable to create goal." },
@@ -122,4 +133,27 @@ export async function DELETE(request: Request) {
     message: "Goal deleted.",
     ...data,
   });
+}
+
+export async function PATCH(request: Request) {
+  const user = await getRequestUser(request);
+
+  if (!user) {
+    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
+  const body = (await request.json().catch(() => null)) as (GoalCreateBody & { id?: string }) | null;
+
+  try {
+    await updateGoal(user, String(body?.id || ""), toSaveInput(body));
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "Unable to update goal." },
+      { status: 400 }
+    );
+  }
+
+  const data = await getGoalsPageData(user);
+
+  return NextResponse.json({ message: "Goal updated.", ...data });
 }

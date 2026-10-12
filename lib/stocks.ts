@@ -17,10 +17,13 @@ import {
   calculateNextBuyLifecycleState,
   calculateNextSellLifecycleState,
   calculateSellSnapshot,
+  findFirstOversell,
   roundCurrency,
   roundPercent,
 } from "@/lib/stocks-calculations";
+import { calculateXirr } from "@/lib/xirr";
 import type {
+  CashFlowPoint,
   SaveStockBuyInput,
   SaveStockSellInput,
   StockChartPoint,
@@ -300,18 +303,20 @@ function buildHoldingSummary(input: {
   totalCurrentValue: number;
   todayDate: string;
 }): StockHoldingSummary {
-  const currentPrice = input.value?.priceOrNav ?? null;
-  const currentValue =
-    currentPrice == null ? 0 : roundCurrency(currentPrice * input.position.quantity);
+  // Until the first price sync lands, value the position at cost rather than zero.
+  const currentPrice = input.value?.priceOrNav ?? input.position.averagePrice;
+  const currentValue = roundCurrency(currentPrice * input.position.quantity);
   const unrealizedProfit = roundCurrency(currentValue - input.position.investedAmount);
   const unrealizedProfitPercent =
     input.position.investedAmount > 0
       ? roundPercent((unrealizedProfit / input.position.investedAmount) * 100)
       : 0;
   const { isStale, lastSyncedAt } = getDailyValueFreshness(input.value, input.todayDate);
+  // Price move x current quantity, so buys/sells since yesterday don't count as P&L.
+  const previousPrice = input.previousValue?.priceOrNav ?? null;
   const todayPnL =
-    input.value && input.value.date === input.todayDate && input.previousValue
-      ? roundCurrency(currentValue - input.previousValue.currentValue)
+    input.value && input.value.date === input.todayDate && previousPrice != null
+      ? roundCurrency((currentPrice - previousPrice) * input.position.quantity)
       : null;
   const todayPnLPercent =
     todayPnL != null && currentValue - todayPnL > 0
@@ -459,8 +464,8 @@ export async function getStockDashboard(userId: string): Promise<StockDashboardD
   ]);
   const totalCurrentValue = roundCurrency(
     positions.reduce((sum, position) => {
-      const price = valueMap.get(position.symbol)?.priceOrNav ?? null;
-      return sum + (price == null ? 0 : price * position.quantity);
+      const price = valueMap.get(position.symbol)?.priceOrNav ?? position.averagePrice;
+      return sum + price * position.quantity;
     }, 0)
   );
   const holdings = positions
@@ -534,6 +539,34 @@ export async function getStockDashboard(userId: string): Promise<StockDashboardD
       .sort((a, b) => a.unrealizedProfitPercent - b.unrealizedProfitPercent)
       .slice(0, 5),
     transactions: [...transactions].reverse().map(normalizeTransaction),
+    ...buildStockCashFlows(transactions, totalCurrentValue),
+  };
+}
+
+function buildStockCashFlows(transactions: StockTransactionRecord[], currentValue: number) {
+  const cashFlows: CashFlowPoint[] = transactions.map((transaction) => {
+    const date = new Date(transaction.transactionDate).toISOString();
+
+    if (transaction.type === "BUY") {
+      const gross = transaction.quantity * transaction.price;
+      const charges = (transaction.brokerage || 0) + (transaction.taxes || 0) + (transaction.charges || 0);
+      return { date, amount: -roundCurrency(transaction.buyNetAmount || gross + charges) };
+    }
+
+    return {
+      date,
+      amount: roundCurrency(
+        transaction.sellNetAmount || transaction.sellGrossAmount || transaction.quantity * transaction.price
+      ),
+    };
+  });
+
+  return {
+    cashFlows,
+    xirr: calculateXirr([
+      ...cashFlows.map((flow) => ({ amount: flow.amount, date: new Date(flow.date) })),
+      ...(currentValue > 0 ? [{ amount: currentValue, date: new Date() }] : []),
+    ]),
   };
 }
 
@@ -635,4 +668,28 @@ export async function getActiveHoldingSymbols(userId: string) {
 export async function validateActiveHoldingSymbol(userId: string, symbol: string) {
   const positions = await getActiveStockPositions(userId);
   return positions.some((position) => position.symbol === symbol.trim().toUpperCase());
+}
+
+export async function deleteStockTransaction(userId: string, transactionId: string) {
+  if (!Types.ObjectId.isValid(transactionId)) {
+    throw new Error("Transaction not found.");
+  }
+
+  const transactions = await loadTransactions(userId);
+  const target = transactions.find((transaction) => String(transaction._id) === transactionId);
+
+  if (!target) {
+    throw new Error("Transaction not found.");
+  }
+
+  const remaining = transactions.filter((transaction) => String(transaction._id) !== transactionId);
+  const oversell = findFirstOversell(remaining);
+
+  if (oversell) {
+    throw new Error(
+      `Can't delete: the ${oversell.symbol.replace(/\.(NS|BO)$/, "")} sale on ${new Date(oversell.transactionDate).toLocaleDateString("en-IN")} would sell more shares than you held. Delete that sale first.`
+    );
+  }
+
+  await StockTransaction.deleteOne({ _id: target._id, userId });
 }

@@ -5,9 +5,12 @@ import {
   getHoldingDailyValueHistory,
   getLatestHoldingValueMap,
   getMonthlyAssetValueSummaries,
+  getPreviousHoldingValueMap,
   getTodayDateKey,
 } from "@/lib/daily-values";
 import { connectToDatabase } from "@/lib/mongodb";
+import { findOversell, validateTransactionRemoval } from "@/lib/mutual-funds-ledger";
+import { calculateXirr } from "@/lib/xirr";
 import { MutualFundTransaction } from "@/lib/models/mutual-fund-transaction";
 import type {
   MutualFundDashboardData,
@@ -123,7 +126,7 @@ function normalizeHoldings(holdings: Map<number, HoldingAccumulator>) {
   return [...holdings.values()]
     .filter((holding) => holding.units > 0.000001)
     .map((holding) => {
-      const units = roundCurrency(holding.units);
+      const units = Math.round(holding.units * 1000) / 1000;
       const investedAmount = roundCurrency(Math.max(holding.investedAmount, 0));
       const averageNav = units ? roundCurrency(investedAmount / units) : 0;
       const currentNav = roundCurrency(holding.latestKnownNav);
@@ -225,15 +228,16 @@ async function applyApprovedCurrentNav(
   holdings: ReturnType<typeof buildHoldingsFromTransactions>,
 ) {
   const todayDate = getTodayDateKey();
-  const valueMap = await getLatestHoldingValueMap(
-    userId,
-    "mutual_fund",
-    holdings.map((holding) => String(holding.schemeCode))
-  );
+  const schemeKeys = holdings.map((holding) => String(holding.schemeCode));
+  const [valueMap, previousValueMap] = await Promise.all([
+    getLatestHoldingValueMap(userId, "mutual_fund", schemeKeys),
+    getPreviousHoldingValueMap(userId, "mutual_fund", schemeKeys, todayDate),
+  ]);
 
   return holdings.map((holding) => {
-    const approvedValue = valueMap.get(String(holding.schemeCode)) || null;
-    const currentNav = approvedValue?.priceOrNav || holding.currentNav;
+    const syncedValue = valueMap.get(String(holding.schemeCode)) || null;
+    const previousNav = previousValueMap.get(String(holding.schemeCode))?.priceOrNav ?? null;
+    const currentNav = syncedValue?.priceOrNav || holding.currentNav;
     const currentValue = roundCurrency(holding.units * currentNav);
     const profitLossAmount = roundCurrency(
       currentValue - holding.investedAmount,
@@ -241,6 +245,12 @@ async function applyApprovedCurrentNav(
     const profitLossPct = holding.investedAmount
       ? roundCurrency((profitLossAmount / holding.investedAmount) * 100)
       : 0;
+    // NAV move x current units (ignores SIP purchases made since the previous sync).
+    const dayChange =
+      syncedValue?.date === todayDate && previousNav
+        ? roundCurrency((currentNav - previousNav) * holding.units)
+        : null;
+    const freshness = getDailyValueFreshness(syncedValue, todayDate);
 
     return {
       ...holding,
@@ -248,8 +258,13 @@ async function applyApprovedCurrentNav(
       currentValue,
       profitLossAmount,
       profitLossPct,
-      lastNavAt: getDailyValueFreshness(approvedValue, todayDate).lastSyncedAt,
-      isStale: getDailyValueFreshness(approvedValue, todayDate).isStale,
+      dayChange,
+      dayChangePct:
+        dayChange != null && previousNav
+          ? roundCurrency(((currentNav - previousNav) / previousNav) * 100)
+          : null,
+      lastNavAt: freshness.lastSyncedAt,
+      isStale: freshness.isStale,
     };
   });
 }
@@ -413,6 +428,60 @@ export async function saveMutualFundTransaction(
 
 }
 
+export async function deleteMutualFundTransaction(userId: string, transactionId: string) {
+  const transactions = await loadTransactions(userId);
+  const toEntry = (transaction: TransactionRecord) => ({
+    id: String(transaction._id),
+    schemeCode: transaction.schemeCode,
+    transactionType: transaction.transactionType,
+    units: transaction.units,
+    date: transaction.transactionDate,
+  });
+  const error = validateTransactionRemoval(transactions.map(toEntry), transactionId);
+
+  if (error) {
+    throw new Error(error);
+  }
+
+  const remaining = transactions.filter((transaction) => String(transaction._id) !== transactionId);
+
+  if (findOversell(remaining.map(toEntry))) {
+    throw new Error("Deleting this transaction would leave an inconsistent ledger.");
+  }
+
+  await connectToDatabase();
+  await MutualFundTransaction.deleteOne({ _id: transactionId, userId });
+
+  // Re-derive the stored realised-profit fields of the remaining sells.
+  const ledger = buildLedgerFromTransactions(remaining);
+  const updates = remaining
+    .filter((transaction) => transaction.transactionType === "sell")
+    .flatMap((transaction) => {
+      const realized = ledger.realizedByTransactionId.get(String(transaction._id));
+
+      return realized
+        ? [
+            {
+              updateOne: {
+                filter: { _id: transaction._id, userId },
+                update: {
+                  $set: {
+                    averageBuyNav: realized.averageBuyNav,
+                    realizedCostBasisAmount: realized.realizedCostBasisAmount,
+                    realizedProfitAmount: realized.realizedProfitAmount,
+                  },
+                },
+              },
+            },
+          ]
+        : [];
+    });
+
+  if (updates.length) {
+    await MutualFundTransaction.bulkWrite(updates);
+  }
+}
+
 export async function getMutualFundNavHistory(
   userId: string,
   schemeCode: number,
@@ -493,7 +562,7 @@ export async function getMutualFundDashboard(
   const months = (await getMonthlyAssetValueSummaries({
     userId,
     assetType: "mutual_fund",
-    count: 6,
+    count: 12,
   })) satisfies MutualFundMonthSummary[];
 
   const ledger = buildLedgerFromTransactions(transactions);
@@ -574,9 +643,29 @@ export async function getMutualFundDashboard(
       };
     });
 
+  const holdingsWithDayChange = holdings.filter((holding) => holding.dayChange != null);
+  const totalDayChange = holdingsWithDayChange.length
+    ? roundCurrency(
+        holdingsWithDayChange.reduce((sum, holding) => sum + (holding.dayChange || 0), 0),
+      )
+    : null;
+  const totalDayChangePct =
+    totalDayChange != null && totalPortfolioValue - totalDayChange > 0
+      ? roundCurrency((totalDayChange / (totalPortfolioValue - totalDayChange)) * 100)
+      : null;
+  const lastUpdatedAt =
+    holdings
+      .map((holding) => holding.lastNavAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) || null;
+
   return {
     totalPortfolioValue,
     totalInvestedAmount,
+    totalDayChange,
+    totalDayChangePct,
+    lastUpdatedAt,
     totalRealizedProfitAmount,
     totalRealizedProfitPct,
     totalProfitLossAmount,
@@ -589,5 +678,27 @@ export async function getMutualFundDashboard(
     holdings,
     previousFunds,
     recentTransactions,
+    ...buildCashFlowsWithXirr(
+      transactions.map((transaction) => ({
+        date: new Date(transaction.transactionDate).toISOString(),
+        amount: roundCurrency(
+          transaction.transactionType === "buy" ? -transaction.amount : transaction.amount,
+        ),
+      })),
+      totalPortfolioValue,
+    ),
+  };
+}
+
+function buildCashFlowsWithXirr(
+  cashFlows: Array<{ date: string; amount: number }>,
+  currentValue: number,
+) {
+  return {
+    cashFlows,
+    xirr: calculateXirr([
+      ...cashFlows.map((flow) => ({ amount: flow.amount, date: new Date(flow.date) })),
+      ...(currentValue > 0 ? [{ amount: currentValue, date: new Date() }] : []),
+    ]),
   };
 }

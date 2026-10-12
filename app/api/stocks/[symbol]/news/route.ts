@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
 
+import { getTokenFromRequest } from "@/lib/api-auth";
+import { verifyAuthToken } from "@/lib/auth";
+import { getStockNews } from "@/lib/services/yahoo-finance.service";
+
 export const runtime = "nodejs";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ symbol: string }> }
-) {
-  const { symbol } = await context.params;
+export async function GET(request: Request, context: { params: Promise<{ symbol: string }> }) {
+  const session = await verifyAuthToken(getTokenFromRequest(request));
 
-  return NextResponse.json({
-    symbol,
-    news: [],
-    message: "Stock news is not fetched live in the DB-first portfolio view.",
-  });
+  if (!session?.sub) {
+    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
+  const { symbol } = await context.params;
+  const news = await getStockNews(decodeURIComponent(symbol)).catch(() => []);
+
+  return NextResponse.json({ symbol, news });
 }

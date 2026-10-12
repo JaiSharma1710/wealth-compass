@@ -56,7 +56,18 @@ export type ExpenseEntrySummary = {
   entryType: ExpenseEntryType;
   amount: number;
   note: string;
+  category: string;
+  categoryLabel: string;
   occurredAt: string;
+};
+
+export type ExpenseCategoryBreakdown = {
+  key: string;
+  label: string;
+  amount: number;
+  count: number;
+  percentage: number;
+  previousAmount: number;
 };
 
 export type ExpenseEntriesPage = {
@@ -77,12 +88,19 @@ export type ExpenseDashboardData = {
   cycleSummary: ExpenseWindowSummary;
   history: Record<ExpenseHistoryGranularity, ExpenseHistoryPoint[]>;
   entriesPage: ExpenseEntriesPage;
+  /** Current-cycle expense split by category, largest first. */
+  categoryBreakdown: ExpenseCategoryBreakdown[];
+  previousCycleSummary: ExpenseWindowSummary;
+  /** Most recent entries (newest first) for client-side search, filters and quick-add suggestions. */
+  recentEntries: ExpenseEntrySummary[];
+  recentEntriesTruncated: boolean;
 };
 
 export type SaveExpenseEntryInput = {
   entryType: ExpenseEntryType;
   amount: number;
   note?: string;
+  category?: string;
   occurredAt: string;
 };
 
@@ -91,3 +109,5 @@ export type SaveExpenseBudgetInput = {
   startYear?: number;
   startMonth?: number;
 };
+
+export type UpdateExpenseEntryInput = SaveExpenseEntryInput;

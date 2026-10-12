@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { AUTH_COOKIE_NAME, verifyAuthToken } from "@/lib/auth";
-import { getCashReserveDashboard, getCashReserveRecentActivity } from "@/lib/cash-reserves";
+import {
+  assertLedgerChangeAllowed,
+  CashReserveChangeError,
+  getCashReserveDashboard,
+  getCashReserveRecentActivity,
+} from "@/lib/cash-reserves";
+import { saveDailyPortfolioValuesForUser } from "@/lib/dashboard";
 import { connectToDatabase } from "@/lib/mongodb";
 import { CashReserveEntry } from "@/lib/models/cash-reserve-entry";
 import { User } from "@/lib/models/user";
@@ -11,8 +17,9 @@ export const runtime = "nodejs";
 type CashReserveCreateBody = {
   date?: string;
   amount?: number | string;
-  entryType?: "credit" | "debit";
+  entryType?: "credit" | "debit" | "transfer";
   bank?: string;
+  toBank?: string;
   note?: string;
 };
 
@@ -119,9 +126,11 @@ export async function POST(request: Request) {
     );
   }
 
-  if (entryType !== "credit" && entryType !== "debit") {
+  const toBank = body?.toBank?.trim() || "";
+
+  if (entryType !== "credit" && entryType !== "debit" && entryType !== "transfer") {
     return NextResponse.json(
-      { message: "Please select either credit or debit." },
+      { message: "Please select credit, debit or transfer." },
       { status: 400 }
     );
   }
@@ -171,14 +180,40 @@ export async function POST(request: Request) {
     );
   }
 
-  await CashReserveEntry.create({
-    userId: session.sub,
-    entryDate,
-    amount: Math.round(amountValue * 100) / 100,
-    entryType,
-    bank,
-    note,
-  });
+  const amount = Math.round(amountValue * 100) / 100;
+  const dateKey = date;
+
+  if (entryType === "transfer" && (!toBank || toBank === bank || !configuredBanks.includes(toBank))) {
+    return NextResponse.json(
+      { message: "Choose two different banks from your profile for a transfer." },
+      { status: 400 }
+    );
+  }
+
+  const newEntries =
+    entryType === "transfer"
+      ? [
+          { entryType: "debit" as const, bank, note: note || `Transfer to ${toBank}` },
+          { entryType: "credit" as const, bank: toBank, note: note || `Transfer from ${bank}` },
+        ]
+      : [{ entryType, bank, note }];
+
+  try {
+    await assertLedgerChangeAllowed(session.sub, {
+      kind: "add",
+      entries: newEntries.map((entry) => ({ dateKey, amount, entryType: entry.entryType, bank: entry.bank })),
+    });
+  } catch (error) {
+    if (error instanceof CashReserveChangeError) {
+      return NextResponse.json({ message: error.message }, { status: error.status });
+    }
+    throw error;
+  }
+
+  await CashReserveEntry.insertMany(
+    newEntries.map((entry) => ({ userId: session.sub, entryDate, amount, ...entry }))
+  );
+  await saveDailyPortfolioValuesForUser(session.sub).catch(() => undefined);
 
   const dashboard = await getCashReserveDashboard(session.sub);
 

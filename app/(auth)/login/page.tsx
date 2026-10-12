@@ -9,40 +9,19 @@ export default async function LoginPage() {
 
   return (
     <PublicShell>
-      <main className="mx-auto flex w-full max-w-6xl flex-1 items-center px-6 py-12">
-        <div className="grid w-full gap-10 lg:grid-cols-[0.95fr_1.05fr]">
-          <section className="flex flex-col justify-center">
-            <p className="text-sm font-medium uppercase tracking-[0.22em] text-muted-foreground">
-              Welcome back
-            </p>
-            <h1 className="mt-4 max-w-lg text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-              Sign in to your Wealth Compass account
-            </h1>
-            <p className="mt-5 max-w-xl text-lg leading-8 text-muted-foreground">
-              Access your financial dashboard, recent activity, and protected
-              planning tools.
-            </p>
-          </section>
-          <section className="rounded-[2rem] border border-border/70 bg-card/90 p-6 shadow-xl shadow-black/5 backdrop-blur">
-            <div className="rounded-[1.5rem] border border-border/70 bg-background p-6 sm:p-8">
-              <AuthForm
-                cta="Sign in"
-                helper="Use your registered email and password."
-                mode="signin"
-              />
-              <div className="mt-6 border-t border-border pt-6 text-sm text-muted-foreground">
-                New here?{" "}
-                <Link
-                  className="font-medium text-foreground underline-offset-4 hover:underline"
-                  href="/signup"
-                >
-                  Create an account
-                </Link>
-              </div>
-            </div>
-          </section>
+      <div className="rounded-2xl border border-line bg-surface p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_12px_32px_rgba(16,24,40,0.06)] sm:p-7">
+        <h1 className="text-xl font-semibold tracking-tight text-ink">Welcome back</h1>
+        <p className="mt-1 text-sm text-ink-3">Sign in to see your portfolio, goals and spending.</p>
+        <div className="mt-6">
+          <AuthForm cta="Sign in" helper="Use your registered email and password." mode="signin" />
         </div>
-      </main>
+      </div>
+      <p className="mt-5 text-center text-sm text-ink-3">
+        New here?{" "}
+        <Link className="font-medium text-brand underline-offset-4 hover:underline" href="/signup">
+          Create an account
+        </Link>
+      </p>
     </PublicShell>
   );
 }

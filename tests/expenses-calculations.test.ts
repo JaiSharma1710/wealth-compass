@@ -4,6 +4,7 @@ import {
   computeHealthSummary,
   getExpenseCycleForDate,
   parseIstDateTime,
+  validateExpenseEntryInput,
 } from "@/lib/expenses-calculations";
 
 describe("expense cycle calculations", () => {
@@ -67,5 +68,48 @@ describe("expense health summary", () => {
     expect(health.averageDailyExpense).toBe(300);
     expect(health.expectedDailyExpense).toBe(571.43);
     expect(health.status).toBe("on_track");
+  });
+
+  it("does not extrapolate a few early large purchases across the whole cycle", () => {
+    const cycle = {
+      key: "2026-10",
+      label: "Oct 2026",
+      startDate: "2026-10-04T18:30:00.000Z",
+      endDate: "2026-11-04T18:29:59.999Z",
+      startYear: 2026,
+      startMonth: 10,
+      totalDays: 31,
+      elapsedDays: 3,
+      remainingDaysIncludingToday: 29,
+    };
+    const health = computeHealthSummary(13000, 3371, cycle, { expenseTotal: 4130, totalDays: 31 });
+
+    expect(health.projectedCycleSpend).toBeLessThan(13000);
+    expect(health.status).not.toBe("over_budget");
+  });
+});
+
+describe("validateExpenseEntryInput", () => {
+  const now = new Date("2026-10-07T06:00:00.000Z");
+  const base = { entryType: "expense", amount: 120, note: " cng ", occurredAt: "2026-10-07T10:00" };
+
+  it("normalises and infers the category", () => {
+    const valid = validateExpenseEntryInput(base, now);
+    expect(valid.note).toBe("cng");
+    expect(valid.category).toBe("transport");
+    expect(valid.amount).toBe(120);
+  });
+
+  it("rejects bad amounts, future dates and mismatched categories", () => {
+    expect(() => validateExpenseEntryInput({ ...base, amount: 0 }, now)).toThrow(/greater than zero/);
+    expect(() => validateExpenseEntryInput({ ...base, amount: Number.NaN }, now)).toThrow();
+    expect(() => validateExpenseEntryInput({ ...base, occurredAt: "2026-10-08T10:00" }, now)).toThrow(/Future/);
+    expect(() => validateExpenseEntryInput({ ...base, occurredAt: "nope" }, now)).toThrow(/valid/);
+    expect(() => validateExpenseEntryInput({ ...base, category: "income" }, now)).toThrow(/Category/);
+    expect(() => validateExpenseEntryInput({ ...base, entryType: "transfer" }, now)).toThrow(/Entry type/);
+  });
+
+  it("accepts a valid credit category", () => {
+    expect(validateExpenseEntryInput({ ...base, entryType: "credit", category: "refund" }, now).category).toBe("refund");
   });
 });

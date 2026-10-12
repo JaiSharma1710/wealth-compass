@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, type UseFormRegisterReturn } from "react-hook-form";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/kit";
+import { Field as FormField, Input } from "@/components/ui/sheet";
 
 type AuthFormProps = {
   cta: string;
@@ -78,13 +79,11 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
   const isBusy = isSubmitting || isPending;
 
   return (
-    <form className="space-y-5" onSubmit={handleSubmit(onSubmit)}>
-      <div>
-        <p className="text-sm text-muted-foreground">{helper}</p>
-      </div>
+    <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
+      <p className="text-xs text-ink-3">{helper}</p>
 
       {mode === "signup" ? (
-        <Field
+        <AuthField
           autoComplete="name"
           error={errors.fullName?.message}
           label="Full name"
@@ -100,7 +99,7 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
         />
       ) : null}
 
-      <Field
+      <AuthField
         autoComplete="email"
         error={errors.email?.message}
         label="Email"
@@ -115,7 +114,7 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
         type="email"
       />
 
-      <Field
+      <AuthField
         autoComplete={mode === "signup" ? "new-password" : "current-password"}
         error={errors.password?.message}
         label="Password"
@@ -135,19 +134,19 @@ export function AuthForm({ cta, helper, mode }: AuthFormProps) {
       />
 
       {serverError ? (
-        <div className="rounded-2xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-xl border border-loss/30 bg-loss-soft px-3.5 py-2.5 text-sm text-loss" role="alert">
           {serverError}
         </div>
       ) : null}
 
-      <Button className="w-full" disabled={isBusy} size="lg" type="submit">
+      <Button className="h-11 w-full text-base sm:text-sm" loading={isBusy} type="submit" variant="primary">
         {isBusy ? "Please wait..." : cta}
       </Button>
     </form>
   );
 }
 
-function Field({
+function AuthField({
   label,
   type,
   placeholder,
@@ -163,16 +162,14 @@ function Field({
   error?: string;
 }) {
   return (
-    <label className="block space-y-2">
-      <span className="text-sm font-medium text-foreground">{label}</span>
-      <input
+    <FormField error={error} label={label}>
+      <Input
         autoComplete={autoComplete}
-        className="flex h-12 w-full rounded-xl border border-border bg-background px-4 text-base shadow-sm transition-colors outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-3 focus:ring-ring/20"
+        className="h-11 text-base"
         placeholder={placeholder}
         type={type}
         {...registration}
       />
-      {error ? <span className="text-sm text-destructive">{error}</span> : null}
-    </label>
+    </FormField>
   );
 }

@@ -1,3 +1,5 @@
+import type { CashFlowPoint } from "@/lib/stocks.types";
+
 export const GOLD_INVESTMENT_OPTIONS = [
   { label: "Sovereign Gold Bonds", value: "sovereign_gold_bond" },
   { label: "Gold ETFs", value: "gold_etf" },
@@ -26,6 +28,24 @@ export type GoldHoldingSummary = {
   currentValue: number;
   profitLossAmount: number;
   profitLossPct: number;
+  /** Date (ISO) of the latest buy or valuation entry for this holding. */
+  lastValuedAt?: string | null;
+};
+
+export type GoldValuePoint = {
+  date: string;
+  /** Total gold value on that day (each holding carries its last known value forward). */
+  totalValue: number;
+  totalInvested: number;
+};
+
+export type GoldTrackerInfo = {
+  holdingId: string;
+  symbol: string;
+  units: number;
+  lastPrice: number | null;
+  lastSyncedAt: string | null;
+  lastError: string;
 };
 
 export type GoldOptionDistribution = {
@@ -67,4 +87,13 @@ export type GoldDashboardData = {
   holdings: GoldHoldingSummary[];
   optionDistribution: GoldOptionDistribution[];
   recentActivity: GoldRecentActivityPage;
+  xirr: number | null;
+  cashFlows: CashFlowPoint[];
+  /** Up to 500 latest entries (buys, sells, valuations), newest first. */
+  allActivity?: GoldActivitySummary[];
+  /** Daily total value series built from buys, sells and valuation entries. */
+  valueHistory?: GoldValuePoint[];
+  /** Change between the two most recent days in valueHistory (null if fewer than two). */
+  lastDayChange?: { amount: number; pct: number | null; fromDate: string; toDate: string } | null;
+  lastValuedAt?: string | null;
 };

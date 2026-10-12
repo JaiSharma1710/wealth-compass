@@ -3,6 +3,8 @@ export type CashReserveEntryType = "credit" | "debit";
 export type CashReserveMonthSummary = {
   key: string;
   label: string;
+  /** e.g. "Oct 26" */
+  longLabel?: string;
   credits: number;
   debits: number;
   net: number;
@@ -16,12 +18,17 @@ export type CashReserveEntrySummary = {
   entryType: CashReserveEntryType;
   bank: string;
   note: string;
+  /** Local calendar day, yyyy-mm-dd (safe for editing / filtering). */
+  dateKey: string;
 };
 
 export type CashReserveBankDistribution = {
   bank: string;
   balance: number;
   percentage: number;
+  lastMovementDate?: string | null;
+  lastMovementAmount?: number | null;
+  lastMovementType?: CashReserveEntryType | null;
 };
 
 export type CashReserveRecentActivityFilters = {
@@ -48,4 +55,9 @@ export type CashReserveDashboardData = {
   bankDistribution: CashReserveBankDistribution[];
   months: CashReserveMonthSummary[];
   recentActivity: CashReserveRecentActivityPage;
+  /** Last 12 months, oldest first (month-end closing balances). */
+  history?: CashReserveMonthSummary[];
+  /** Every entry (newest first, capped) for client-side filtering. */
+  allEntries?: CashReserveEntrySummary[];
+  lastActivityDate?: string | null;
 };

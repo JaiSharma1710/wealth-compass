@@ -9,6 +9,7 @@ import {
   calculateSellSnapshot,
   calculateTodayPnL,
   calculateTodayPnLPercent,
+  findFirstOversell,
 } from "../lib/stocks-calculations";
 
 describe("calculateAverageStockPrice", () => {
@@ -182,5 +183,38 @@ describe("mark-to-market calculations", () => {
 
   it("returns null for today's P&L percent when previous value would be invalid", () => {
     expect(calculateTodayPnLPercent(1200, 1200)).toBeNull();
+  });
+});
+
+describe("findFirstOversell", () => {
+  const base = { createdAt: "2026-01-01T00:00:00Z" };
+
+  it("accepts a consistent ledger", () => {
+    expect(
+      findFirstOversell([
+        { ...base, symbol: "ITC", type: "BUY", quantity: 10, transactionDate: "2026-01-01" },
+        { ...base, symbol: "ITC", type: "SELL", quantity: 4, transactionDate: "2026-02-01" },
+      ])
+    ).toBeNull();
+  });
+
+  it("flags a sell left without enough shares after removing a buy", () => {
+    const sell = { ...base, symbol: "ITC", type: "SELL" as const, quantity: 4, transactionDate: "2026-02-01" };
+
+    expect(
+      findFirstOversell([
+        { ...base, symbol: "ITC", type: "BUY", quantity: 2, transactionDate: "2026-01-01" },
+        sell,
+      ])
+    ).toBe(sell);
+  });
+
+  it("orders by date so a later buy does not cover an earlier sell", () => {
+    expect(
+      findFirstOversell([
+        { ...base, symbol: "ITC", type: "SELL", quantity: 1, transactionDate: "2026-01-01" },
+        { ...base, symbol: "ITC", type: "BUY", quantity: 5, transactionDate: "2026-02-01" },
+      ])
+    ).not.toBeNull();
   });
 });

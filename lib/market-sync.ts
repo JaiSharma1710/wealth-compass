@@ -2,6 +2,7 @@ import "server-only";
 
 import { Types } from "mongoose";
 
+import { syncGoldValuations } from "@/lib/gold-tracking";
 import {
   getLatestHoldingValueMap,
   getTodayDateKey,
@@ -148,26 +149,6 @@ function normalizeBatch(batch: MarketSyncBatchLean): MarketSyncBatchSummary {
   };
 }
 
-function getBatchStatus(items: MarketSyncItemLean[]) {
-  if (!items.length) {
-    return "error" as const;
-  }
-
-  if (items.every((item) => item.status === "synced" || item.status === "skipped")) {
-    return "synced" as const;
-  }
-
-  if (items.every((item) => item.status === "approved" || item.status === "error")) {
-    return "approved" as const;
-  }
-
-  if (items.some((item) => item.status === "approved")) {
-    return "partially_approved" as const;
-  }
-
-  return "pending" as const;
-}
-
 async function buildStockItems(userId: string, fetchedAt: Date) {
   const positions = await getActiveStockPositions(userId);
   const symbols = positions.map((position) => position.symbol);
@@ -246,6 +227,50 @@ async function buildMutualFundItems(userId: string, fetchedAt: Date) {
   );
 }
 
+async function upsertHoldingValuesFromItems(input: {
+  userId: string;
+  date: string;
+  source: MarketSyncSource;
+  items: MarketSyncItemLean[] | Array<Omit<MarketSyncItemLean, "_id">>;
+  syncedAt: Date;
+}) {
+  await upsertDailyValues(
+    input.items.map((item) => ({
+      userId: input.userId,
+      date: input.date,
+      scope: "holding" as const,
+      assetType: item.assetType,
+      assetKey: item.assetKey,
+      assetLabel: item.assetLabel,
+      priceOrNav: item.newPriceOrNav ?? null,
+      quantityOrUnits: item.quantityOrUnits,
+      investedAmount: item.investedAmount,
+      currentValue: item.newValue,
+      gainLoss: item.newValue - item.investedAmount,
+      source: input.source,
+      sourceFetchedAt: item.newFetchedAt,
+      syncedAt: input.syncedAt,
+    }))
+  );
+}
+
+// Older batches still waiting on manual approval are superseded by a newer sync.
+async function supersedeOpenBatches(userId: string, exceptBatchId: Types.ObjectId | string) {
+  await MarketSyncBatch.updateMany(
+    {
+      userId: toObjectId(userId),
+      _id: { $ne: exceptBatchId },
+      status: { $in: ["pending", "partially_approved", "approved"] },
+    },
+    { $set: { status: "discarded" } }
+  );
+}
+
+/**
+ * Fetches fresh prices/NAVs and applies them immediately (no manual approval).
+ * Rows whose price could not be fetched keep their previous value and are recorded
+ * as errors on the batch for visibility.
+ */
 export async function createMarketSyncBatch(input: {
   userId: string;
   assetType: MarketSyncRefreshAssetType;
@@ -263,40 +288,94 @@ export async function createMarketSyncBatch(input: {
       ? buildMutualFundItems(input.userId, fetchedAt)
       : Promise.resolve([]),
   ]);
-  const items = [...stockItems, ...mutualFundItems];
+  const builtItems = [...stockItems, ...mutualFundItems];
+
+  if (!builtItems.length) {
+    return null;
+  }
+
+  const syncedAt = new Date();
+  const items = builtItems.map((item) =>
+    item.status === "pending" ? { ...item, status: "synced" as const } : item
+  );
+  const syncedItems = items.filter((item) => item.status === "synced");
+
+  if (syncedItems.length) {
+    await upsertHoldingValuesFromItems({
+      userId: input.userId,
+      date,
+      source: input.source,
+      items: syncedItems,
+      syncedAt,
+    });
+  }
+
   const batch = await MarketSyncBatch.create({
     userId: input.userId,
     date,
     source: input.source,
     assetType: input.assetType,
-    status: items.length ? "pending" : "error",
+    status: syncedItems.length ? "synced" : "error",
     fetchedAt,
+    syncedAt: syncedItems.length ? syncedAt : null,
     items,
-    errorMessage: items.length ? "" : "No active stock or mutual fund holdings to refresh.",
+    errorMessage: syncedItems.length ? "" : "No prices could be fetched.",
   });
+
+  await supersedeOpenBatches(input.userId, batch._id);
 
   return normalizeBatch(batch.toObject() as MarketSyncBatchLean);
 }
 
-export async function createCronMarketSyncBatches() {
+export type MarketSyncRunAssetType = MarketSyncRefreshAssetType | "gold";
+
+/** Full refresh for one user: market prices, gold valuations, then the daily net-worth snapshot. */
+export async function runMarketSync(input: {
+  userId: string;
+  assetType?: MarketSyncRunAssetType;
+  source: MarketSyncSource;
+}) {
+  const assetType = input.assetType || "mixed";
+  const [gold, batch] = await Promise.all([
+    assetType === "gold" || assetType === "mixed"
+      ? syncGoldValuations(input.userId).catch(() => ({ updated: 0, failed: 0 }))
+      : Promise.resolve({ updated: 0, failed: 0 }),
+    assetType === "gold"
+      ? Promise.resolve(null)
+      : createMarketSyncBatch({ userId: input.userId, assetType, source: input.source }),
+  ]);
+
+  await saveDailyPortfolioValuesForUser(input.userId);
+
+  return { batch, gold };
+}
+
+export async function runCronMarketSync() {
   await connectToDatabase();
 
   const users = await User.find({ status: "active" }).select({ _id: 1 }).lean();
-  const batches: MarketSyncBatchSummary[] = [];
+  const results = [];
 
   for (const user of users) {
-    const batch = await createMarketSyncBatch({
-      userId: String(user._id),
-      assetType: "mixed",
-      source: "cron",
-    });
+    const userId = String(user._id);
 
-    if (batch.items.length) {
-      batches.push(batch);
+    try {
+      const { batch, gold } = await runMarketSync({ userId, source: "cron" });
+      results.push({
+        userId,
+        synced: batch?.itemCounts.synced ?? 0,
+        failed: batch?.itemCounts.error ?? 0,
+        goldUpdated: gold.updated,
+      });
+    } catch (error) {
+      results.push({
+        userId,
+        error: error instanceof Error ? error.message : "Sync failed.",
+      });
     }
   }
 
-  return batches;
+  return results;
 }
 
 export async function listMarketSyncBatches(input: {
@@ -317,153 +396,4 @@ export async function listMarketSyncBatches(input: {
     .lean()) as MarketSyncBatchLean[];
 
   return batches.map(normalizeBatch);
-}
-
-async function loadBatchForUser(userId: string, batchId: string) {
-  if (!Types.ObjectId.isValid(batchId)) {
-    throw new Error("Invalid market sync batch ID.");
-  }
-
-  await connectToDatabase();
-
-  const batch = (await MarketSyncBatch.findOne({
-    _id: toObjectId(batchId),
-    userId: toObjectId(userId),
-  }).lean()) as MarketSyncBatchLean | null;
-
-  if (!batch) {
-    throw new Error("Market sync batch not found.");
-  }
-
-  return batch;
-}
-
-function getSelectedItemIds(batch: MarketSyncBatchLean, itemIds?: string[] | null) {
-  const allPendingIds = batch.items
-    .filter((item) => item.status === "pending")
-    .map((item) => String(item._id));
-
-  if (!itemIds?.length) {
-    return allPendingIds;
-  }
-
-  const allowed = new Set(allPendingIds);
-  return itemIds.filter((itemId) => allowed.has(itemId));
-}
-
-export async function approveMarketSyncBatchItems(input: {
-  userId: string;
-  batchId: string;
-  itemIds?: string[] | null;
-}) {
-  const batch = await loadBatchForUser(input.userId, input.batchId);
-  const selectedIds = new Set(getSelectedItemIds(batch, input.itemIds));
-
-  if (!selectedIds.size) {
-    throw new Error("No pending rows selected for approval.");
-  }
-
-  const items = batch.items.map((item) => ({
-    ...item,
-    status: selectedIds.has(String(item._id)) ? ("approved" as const) : item.status,
-  }));
-
-  await MarketSyncBatch.updateOne(
-    { _id: toObjectId(input.batchId), userId: toObjectId(input.userId) },
-    {
-      $set: {
-        items,
-        status: getBatchStatus(items),
-      },
-    }
-  );
-
-  const updated = await loadBatchForUser(input.userId, input.batchId);
-  return normalizeBatch(updated);
-}
-
-export async function syncApprovedMarketSyncBatch(input: {
-  userId: string;
-  batchId: string;
-}) {
-  const batch = await loadBatchForUser(input.userId, input.batchId);
-  const approvedItems = batch.items.filter((item) => item.status === "approved");
-
-  if (!approvedItems.length) {
-    throw new Error("Approve at least one row before syncing.");
-  }
-
-  const syncedAt = new Date();
-
-  await upsertDailyValues(
-    approvedItems.map((item) => ({
-      userId: input.userId,
-      date: batch.date,
-      scope: "holding",
-      assetType: item.assetType,
-      assetKey: item.assetKey,
-      assetLabel: item.assetLabel,
-      priceOrNav: item.newPriceOrNav ?? null,
-      quantityOrUnits: item.quantityOrUnits,
-      investedAmount: item.investedAmount,
-      currentValue: item.newValue,
-      gainLoss: item.newValue - item.investedAmount,
-      source: batch.source,
-      sourceFetchedAt: item.newFetchedAt,
-      syncedAt,
-    }))
-  );
-
-  const items = batch.items.map((item) => {
-    if (item.status === "approved") {
-      return { ...item, status: "synced" as const };
-    }
-
-    if (item.status === "pending") {
-      return { ...item, status: "skipped" as const };
-    }
-
-    return item;
-  });
-
-  await MarketSyncBatch.updateOne(
-    { _id: toObjectId(input.batchId), userId: toObjectId(input.userId) },
-    {
-      $set: {
-        items,
-        status: "synced",
-        syncedAt,
-      },
-    }
-  );
-
-  await saveDailyPortfolioValuesForUser(input.userId);
-
-  const updated = await loadBatchForUser(input.userId, input.batchId);
-  return normalizeBatch(updated);
-}
-
-export async function discardMarketSyncBatch(input: {
-  userId: string;
-  batchId: string;
-}) {
-  const batch = await loadBatchForUser(input.userId, input.batchId);
-  const items = batch.items.map((item) =>
-    item.status === "pending" || item.status === "approved"
-      ? { ...item, status: "skipped" as const }
-      : item
-  );
-
-  await MarketSyncBatch.updateOne(
-    { _id: toObjectId(input.batchId), userId: toObjectId(input.userId) },
-    {
-      $set: {
-        items,
-        status: "discarded",
-      },
-    }
-  );
-
-  const updated = await loadBatchForUser(input.userId, input.batchId);
-  return normalizeBatch(updated);
 }

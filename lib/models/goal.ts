@@ -32,21 +32,19 @@ const goalSchema = new Schema(
       type: Date,
       default: null,
     },
+    // Legacy single-link fields: kept readable for old documents, no longer written.
     assetType: {
       type: String,
       enum: GOAL_ASSET_TYPES,
-      required: true,
       index: true,
     },
     investmentId: {
       type: String,
-      required: true,
       trim: true,
       maxlength: 200,
     },
     investmentLabel: {
       type: String,
-      required: true,
       trim: true,
       maxlength: 220,
     },
@@ -55,6 +53,19 @@ const goalSchema = new Schema(
       default: "",
       trim: true,
       maxlength: 220,
+    },
+    links: {
+      type: [
+        new Schema(
+          {
+            assetType: { type: String, enum: GOAL_ASSET_TYPES, required: true },
+            investmentId: { type: String, required: true, trim: true, maxlength: 200 },
+            label: { type: String, default: "", trim: true, maxlength: 220 },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
     },
   },
   {
@@ -75,6 +86,7 @@ function hasCurrentGoalSchema(existingModel: Model<GoalDocument>) {
     "investmentId",
     "investmentLabel",
     "investmentDetail",
+    "links",
   ].every((path) => existingModel.schema.path(path));
 }
 

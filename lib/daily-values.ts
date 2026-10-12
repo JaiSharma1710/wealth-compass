@@ -292,6 +292,8 @@ export async function getPortfolioHistoryFromDailyValues(
         mutualFundsValue: 0,
         goldValue: 0,
         cashValue: 0,
+        otherAssetsValue: 0,
+        liabilitiesValue: 0,
       } satisfies DashboardHistoryPoint);
 
     if (row.scope === "portfolio") {
@@ -304,6 +306,10 @@ export async function getPortfolioHistoryFromDailyValues(
       current.goldValue = roundCurrency(row.currentValue);
     } else if (row.assetType === "cash") {
       current.cashValue = roundCurrency(row.currentValue);
+    } else if (row.assetType === "other") {
+      current.otherAssetsValue = roundCurrency(row.currentValue);
+    } else if (row.assetType === "liability") {
+      current.liabilitiesValue = roundCurrency(row.currentValue);
     }
 
     byDate.set(row.date, current);
@@ -314,7 +320,12 @@ export async function getPortfolioHistoryFromDailyValues(
     totalValue:
       point.totalValue ||
       roundCurrency(
-        point.stocksValue + point.mutualFundsValue + point.goldValue + point.cashValue
+        point.stocksValue +
+          point.mutualFundsValue +
+          point.goldValue +
+          point.cashValue +
+          point.otherAssetsValue -
+          point.liabilitiesValue
       ),
   }));
 

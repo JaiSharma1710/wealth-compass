@@ -1,13 +1,20 @@
-"use client";
+import { Skeleton } from "@/components/ui/kit";
 
-import { LoaderCircle } from "lucide-react";
-
-export function PageLoadingState({ label = "Loading..." }: { label?: string }) {
+/** Route-level skeleton: mirrors the hero + KPI + two-card layout most pages use. */
+export function PageLoadingState({ label = "Loading" }: { label?: string }) {
   return (
-    <div className="flex h-full items-center justify-center bg-[#f5f7fb] px-6">
-      <div className="flex min-h-[18rem] w-full max-w-3xl flex-col items-center justify-center rounded-[28px] border border-[#dce4f0] bg-white text-center shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
-        <LoaderCircle className="h-7 w-7 animate-spin text-[#173d7a]" />
-        <p className="mt-4 text-sm font-semibold text-[#34425a]">{label}</p>
+    <div className="h-full overflow-hidden" aria-busy="true" aria-label={label}>
+      <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 md:pt-6 lg:px-8">
+        <Skeleton className="h-36 w-full rounded-2xl" />
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton key={index} className="h-20 rounded-2xl" />
+          ))}
+        </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <Skeleton className="h-72 rounded-2xl lg:col-span-2" />
+          <Skeleton className="h-72 rounded-2xl" />
+        </div>
       </div>
     </div>
   );

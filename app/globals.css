@@ -4,9 +4,41 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Wealth Compass design tokens.
+ * Components use the semantic utilities below (bg-surface, text-ink-2, border-line,
+ * text-gain, bg-asset-stocks ...) so light and dark mode come from one place.
+ */
 @theme inline {
     --font-heading: var(--app-font-sans);
     --font-sans: var(--app-font-sans);
+
+    --color-canvas: var(--wc-canvas);
+    --color-surface: var(--wc-surface);
+    --color-surface-2: var(--wc-surface-2);
+    --color-surface-3: var(--wc-surface-3);
+    --color-line: var(--wc-line);
+    --color-line-strong: var(--wc-line-strong);
+    --color-ink: var(--wc-ink);
+    --color-ink-2: var(--wc-ink-2);
+    --color-ink-3: var(--wc-ink-3);
+    --color-brand: var(--wc-brand);
+    --color-brand-soft: var(--wc-brand-soft);
+    --color-brand-ink: var(--wc-brand-ink);
+    --color-cta: var(--wc-cta);
+    --color-cta-ink: var(--wc-cta-ink);
+    --color-gain: var(--wc-gain);
+    --color-gain-soft: var(--wc-gain-soft);
+    --color-loss: var(--wc-loss);
+    --color-loss-soft: var(--wc-loss-soft);
+    --color-warn: var(--wc-warn);
+    --color-warn-soft: var(--wc-warn-soft);
+    --color-asset-stocks: var(--wc-asset-stocks);
+    --color-asset-funds: var(--wc-asset-funds);
+    --color-asset-cash: var(--wc-asset-cash);
+    --color-asset-gold: var(--wc-asset-gold);
+    --color-asset-other: var(--wc-asset-other);
+
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,103 +80,154 @@
 }
 
 :root {
-    --app-font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    --wc-chart-grid: #e8edf4;
-    --wc-chart-tick: #8a95a5;
+    --app-font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+
+    --wc-canvas: #f3f4f7;
+    --wc-surface: #ffffff;
+    --wc-surface-2: #f7f8fa;
+    --wc-surface-3: #eef0f4;
+    --wc-line: #e6e8ee;
+    --wc-line-strong: #d3d7e0;
+    --wc-ink: #0e1525;
+    --wc-ink-2: #4d5668;
+    --wc-ink-3: #7c8597;
+    --wc-brand: #2a5bd7;
+    --wc-brand-soft: #eaf0fd;
+    --wc-brand-ink: #1d47b0;
+    --wc-cta: #0e1525;
+    --wc-cta-ink: #ffffff;
+    --wc-gain: #0a8f4f;
+    --wc-gain-soft: #e7f6ee;
+    --wc-loss: #d33a2c;
+    --wc-loss-soft: #fdecea;
+    --wc-warn: #b26b00;
+    --wc-warn-soft: #fff4e0;
+
+    /* Categorical chart slots (validated: dataviz palette, light). */
+    --wc-asset-stocks: #2a78d6;
+    --wc-asset-funds: #eb6834;
+    --wc-asset-cash: #1baf7a;
+    --wc-asset-gold: #eda100;
+    --wc-asset-other: #4a3aa7;
+
+    --wc-chart-grid: #eceef3;
+    --wc-chart-tick: #8a93a3;
     --wc-tooltip-bg: #ffffff;
-    --wc-tooltip-border: #e6ebf2;
-    --wc-tooltip-text: #111111;
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
+    --wc-tooltip-border: #e6e8ee;
+    --wc-tooltip-text: #0e1525;
+
+    --card: var(--wc-surface);
+    --card-foreground: var(--wc-ink);
+    --popover: var(--wc-surface);
+    --popover-foreground: var(--wc-ink);
+    --primary: var(--wc-cta);
+    --primary-foreground: var(--wc-cta-ink);
+    --secondary: var(--wc-surface-2);
+    --secondary-foreground: var(--wc-ink);
+    --muted: var(--wc-surface-2);
+    --muted-foreground: var(--wc-ink-3);
+    --accent: var(--wc-surface-2);
+    --accent-foreground: var(--wc-ink);
+    --destructive: var(--wc-loss);
+    --border: var(--wc-line);
+    --input: var(--wc-line);
+    --ring: var(--wc-brand);
+    --chart-1: var(--wc-asset-stocks);
+    --chart-2: var(--wc-asset-funds);
+    --chart-3: var(--wc-asset-cash);
+    --chart-4: var(--wc-asset-gold);
+    --chart-5: var(--wc-asset-other);
+    --radius: 0.75rem;
+    --sidebar: var(--wc-surface);
+    --sidebar-foreground: var(--wc-ink);
+    --sidebar-primary: var(--wc-cta);
+    --sidebar-primary-foreground: var(--wc-cta-ink);
+    --sidebar-accent: var(--wc-surface-2);
+    --sidebar-accent-foreground: var(--wc-ink);
+    --sidebar-border: var(--wc-line);
+    --sidebar-ring: var(--wc-brand);
+    --background: var(--wc-canvas);
+    --foreground: var(--wc-ink);
 }
 
 .dark {
-    --wc-chart-grid: #263244;
-    --wc-chart-tick: #94a3b8;
-    --wc-tooltip-bg: #111827;
-    --wc-tooltip-border: #263244;
-    --wc-tooltip-text: #f8fafc;
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    color-scheme: dark;
+
+    --wc-canvas: #0b0f17;
+    --wc-surface: #131926;
+    --wc-surface-2: #1a2131;
+    --wc-surface-3: #222a3b;
+    --wc-line: #252d3e;
+    --wc-line-strong: #333c50;
+    --wc-ink: #f1f4f9;
+    --wc-ink-2: #b4bccb;
+    --wc-ink-3: #808a9d;
+    --wc-brand: #6d95f2;
+    --wc-brand-soft: #1b2744;
+    --wc-brand-ink: #9ab6f7;
+    --wc-cta: #f1f4f9;
+    --wc-cta-ink: #0e1525;
+    --wc-gain: #34c27a;
+    --wc-gain-soft: #12291f;
+    --wc-loss: #f0685b;
+    --wc-loss-soft: #2e1714;
+    --wc-warn: #f0a93b;
+    --wc-warn-soft: #2d2210;
+
+    /* Same hues stepped for the dark surface (validated separately). */
+    --wc-asset-stocks: #3987e5;
+    --wc-asset-funds: #d95926;
+    --wc-asset-cash: #199e70;
+    --wc-asset-gold: #c98500;
+    --wc-asset-other: #9085e9;
+
+    --wc-chart-grid: #222a3b;
+    --wc-chart-tick: #808a9d;
+    --wc-tooltip-bg: #1a2131;
+    --wc-tooltip-border: #333c50;
+    --wc-tooltip-text: #f1f4f9;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
-  body {
-    @apply bg-background text-foreground;
-    }
+  }
+
   html {
     @apply font-sans;
-    }
-}
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-@media (max-width: 640px) {
-  html {
-    font-size: 15px;
+  body {
+    @apply bg-canvas text-ink;
   }
 }
 
+/* Money columns line up when every digit has the same width. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* iOS Safari zooms into inputs below 16px on focus; keep form fields at 16px on phones. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* react-bootstrap-typeahead (stock / fund search) */
 @keyframes rbt-spin {
   to {
     transform: rotate(360deg);
@@ -161,35 +244,38 @@
 
 .rbt-menu.dropdown-menu {
   width: 100%;
-  overflow: hidden;
-  border: 1px solid #dbe2ee;
-  border-radius: 1rem;
-  background: #ffffff;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid var(--wc-line);
+  border-radius: 0.75rem;
+  background: var(--wc-surface);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.14);
+  z-index: 60;
 }
 
 .dropdown-item {
   display: block;
   width: 100%;
-  padding: 0.85rem 1rem;
+  padding: 0.7rem 0.9rem;
   text-align: left;
-  color: #111827;
+  color: var(--wc-ink);
   background: transparent;
   border: 0;
+  font-size: 0.875rem;
 }
 
 .dropdown-item:hover,
 .dropdown-item:focus {
-  background: #f5f7fb;
+  background: var(--wc-surface-2);
 }
 
 .dropdown-item.active {
-  background: #111111;
-  color: #ffffff;
+  background: var(--wc-brand-soft);
+  color: var(--wc-brand-ink);
 }
 
 .dropdown-item.disabled {
-  color: #9aa3b2;
+  color: var(--wc-ink-3);
 }
 
 .rbt-aux {
@@ -203,189 +289,8 @@
   display: inline-block;
   width: 1rem;
   height: 1rem;
-  border: 2px solid #dbe2ee;
-  border-top-color: #111111;
+  border: 2px solid var(--wc-line);
+  border-top-color: var(--wc-ink);
   border-radius: 9999px;
   animation: rbt-spin 0.7s linear infinite;
-}
-
-.dark .wc-protected {
-  background: linear-gradient(180deg, #0b1120 0%, #0f172a 100%);
-  color: #e5e7eb;
-}
-
-.dark .wc-protected .bg-white,
-.dark .wc-protected [class*="bg-[#fafaf8]"],
-.dark .wc-protected [class*="bg-[#f8fbff]"],
-.dark .wc-protected [class*="bg-[#f7f7f5]"],
-.dark .wc-protected [class*="bg-[#f5f7fb]"],
-.dark .wc-protected [class*="bg-[#f2f5ef]"] {
-  background-color: #111827 !important;
-}
-
-.dark .wc-protected [class*="bg-[#111111]"] {
-  background-color: #f8fafc !important;
-}
-
-.dark .wc-protected .text-white {
-  color: #111827 !important;
-}
-
-.dark .wc-protected .text-neutral-950,
-.dark .wc-protected .text-neutral-900,
-.dark .wc-protected .text-neutral-800 {
-  color: #f8fafc !important;
-}
-
-.dark .wc-protected .text-neutral-700,
-.dark .wc-protected .text-neutral-600 {
-  color: #cbd5e1 !important;
-}
-
-.dark .wc-protected .text-neutral-500,
-.dark .wc-protected .text-neutral-400,
-.dark .wc-protected [class*="text-[#9aa3b2]"] {
-  color: #94a3b8 !important;
-}
-
-.dark .wc-protected .border,
-.dark .wc-protected .border-r,
-.dark .wc-protected .border-b,
-.dark .wc-protected .border-t,
-.dark .wc-protected [class*="border-[#e6ebf2]"],
-.dark .wc-protected [class*="border-[#eef2f7]"],
-.dark .wc-protected [class*="border-[#dbe2ee]"],
-.dark .wc-protected [class*="border-[#d9dfeb]"] {
-  border-color: #263244 !important;
-}
-
-.dark .wc-protected input,
-.dark .wc-protected select,
-.dark .wc-protected textarea {
-  background-color: #0f172a !important;
-  border-color: #263244 !important;
-  color: #f8fafc !important;
-}
-
-.dark .wc-protected input::placeholder,
-.dark .wc-protected textarea::placeholder {
-  color: #64748b !important;
-}
-
-.dark .wc-protected input[readonly],
-.dark .wc-protected input:disabled,
-.dark .wc-protected select:disabled,
-.dark .wc-protected textarea:disabled {
-  background-color: #111827 !important;
-  color: #64748b !important;
-}
-
-.dark .wc-protected .hover\:bg-neutral-50:hover,
-.dark .wc-protected .hover\:bg-neutral-100:hover {
-  background-color: #1e293b !important;
-}
-
-.dark .wc-protected .hover\:text-neutral-950:hover,
-.dark .wc-protected .hover\:text-neutral-900:hover,
-.dark .wc-protected .hover\:text-neutral-700:hover {
-  color: #f8fafc !important;
-}
-
-.dark .wc-protected .divide-y > :not(:last-child) {
-  border-color: #263244 !important;
-}
-
-.dark .wc-protected table tbody,
-.dark .wc-protected table tr,
-.dark .wc-protected table td {
-  background-color: #111827;
-}
-
-.dark .wc-protected .shadow-sm {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35) !important;
-}
-
-.dark .wc-protected [class*="shadow-[0_18px"],
-.dark .wc-protected [class*="shadow-[0_24px"],
-.dark .wc-protected [class*="shadow-[0_24px_70px"] {
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45) !important;
-}
-
-.dark .wc-protected .rbt-menu.dropdown-menu {
-  background: #111827;
-  border-color: #263244;
-}
-
-.dark .wc-protected .dropdown-item {
-  color: #e5e7eb;
-}
-
-.dark .wc-protected .dropdown-item:hover,
-.dark .wc-protected .dropdown-item:focus {
-  background: #1e293b;
-}
-
-.dark .wc-protected .dropdown-item.active {
-  background: #f8fafc;
-  color: #111827;
-}
-
-.dark .wc-portal.bg-white,
-.dark .wc-portal .bg-white,
-.dark .wc-portal [class*="bg-[#fafaf8]"],
-.dark .wc-portal [class*="bg-[#f7f7f5]"] {
-  background-color: #111827 !important;
-}
-
-.dark .wc-portal [class*="bg-[#111111]"] {
-  background-color: #f8fafc !important;
-}
-
-.dark .wc-portal .text-neutral-950,
-.dark .wc-portal .text-neutral-900,
-.dark .wc-portal .text-neutral-800 {
-  color: #f8fafc !important;
-}
-
-.dark .wc-portal .text-neutral-700,
-.dark .wc-portal .text-neutral-600 {
-  color: #cbd5e1 !important;
-}
-
-.dark .wc-portal .text-neutral-500,
-.dark .wc-portal .text-neutral-400 {
-  color: #94a3b8 !important;
-}
-
-.dark .wc-portal,
-.dark .wc-portal .border,
-.dark .wc-portal [class*="border-[#e6ebf2]"],
-.dark .wc-portal [class*="border-[#eef2f7]"],
-.dark .wc-portal [class*="border-[#dbe2ee]"] {
-  border-color: #263244 !important;
-}
-
-.dark .wc-portal input,
-.dark .wc-portal textarea {
-  background-color: #0f172a !important;
-  border-color: #263244 !important;
-  color: #f8fafc !important;
-}
-
-.dark .wc-portal input::placeholder,
-.dark .wc-portal textarea::placeholder {
-  color: #64748b !important;
-}
-
-.dark .wc-portal .hover\:bg-neutral-100:hover {
-  background-color: #1e293b !important;
-}
-
-.dark .wc-portal .hover\:text-neutral-950:hover,
-.dark .wc-portal .hover\:text-neutral-900:hover {
-  color: #f8fafc !important;
-}
-
-.dark .wc-portal .divide-y > :not(:last-child) {
-  border-color: #263244 !important;
 }

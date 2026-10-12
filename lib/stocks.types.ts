@@ -141,6 +141,13 @@ export type StockDashboardData = {
   topGainers: StockHoldingSummary[];
   topLosers: StockHoldingSummary[];
   transactions: StockTransactionSummary[];
+  xirr: number | null;
+  cashFlows: CashFlowPoint[];
+};
+
+export type CashFlowPoint = {
+  date: string;
+  amount: number;
 };
 
 export type StockDetailData = {

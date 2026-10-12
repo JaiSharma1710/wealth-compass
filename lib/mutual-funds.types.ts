@@ -1,3 +1,5 @@
+import type { CashFlowPoint } from "@/lib/stocks.types";
+
 export type MutualFundTransactionType = "buy" | "sell";
 
 export type MutualFundMonthSummary = {
@@ -36,6 +38,8 @@ export type MutualFundHoldingSummary = {
   allocationPct: number;
   lastNavAt?: string | null;
   isStale?: boolean;
+  dayChange?: number | null;
+  dayChangePct?: number | null;
 };
 
 export type MutualFundOptionSummary = {
@@ -66,10 +70,15 @@ export type MutualFundDashboardData = {
   totalProfitLossPct: number;
   monthOverMonthChangeAmount: number;
   monthOverMonthChangePct: number;
+  totalDayChange: number | null;
+  totalDayChangePct: number | null;
+  lastUpdatedAt: string | null;
   months: MutualFundMonthSummary[];
   distribution: MutualFundHoldingSummary[];
   topHoldings: MutualFundHoldingSummary[];
   holdings: MutualFundHoldingSummary[];
   previousFunds: MutualFundOptionSummary[];
   recentTransactions: MutualFundTransactionSummary[];
+  xirr: number | null;
+  cashFlows: CashFlowPoint[];
 };

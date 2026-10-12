@@ -1,3 +1,4 @@
+import { isValidCategory, resolveCategory } from "@/lib/expense-categories";
 import type { ExpenseCycleSummary, ExpenseHealthSummary, ExpenseWindowSummary } from "@/lib/expenses.types";
 
 export const EXPENSE_TRACKER_TIMEZONE = "Asia/Kolkata";
@@ -190,7 +191,8 @@ export function computeWindowSummary(
 export function computeHealthSummary(
   budgetAmount: number | null,
   cycleExpenseTotal: number,
-  cycle: ExpenseCycleDescriptor
+  cycle: ExpenseCycleDescriptor,
+  previousCycle?: { expenseTotal: number; totalDays: number } | null
 ): ExpenseHealthSummary {
   if (budgetAmount == null) {
     return {
@@ -213,7 +215,17 @@ export function computeHealthSummary(
       ? remainingBudget / cycle.remainingDaysIncludingToday
       : remainingBudget
   );
-  const projectedCycleSpend = roundCurrency(averageDailyExpense * cycle.totalDays);
+  // Early in a cycle a few large purchases distort the daily pace, so blend it with a
+  // baseline (last cycle's pace, else the budget's) weighted by how much of the cycle has passed.
+  const baselineDailyRate =
+    previousCycle && previousCycle.expenseTotal > 0 && previousCycle.totalDays > 0
+      ? previousCycle.expenseTotal / previousCycle.totalDays
+      : budgetAmount / Math.max(cycle.totalDays, 1);
+  const cycleProgress = Math.min(Math.max(cycle.elapsedDays / Math.max(cycle.totalDays, 1), 0), 1);
+  const blendedDailyRate =
+    cycleProgress * averageDailyExpense + (1 - cycleProgress) * baselineDailyRate;
+  const daysAfterToday = Math.max(cycle.remainingDaysIncludingToday - 1, 0);
+  const projectedCycleSpend = roundCurrency(cycleExpenseTotal + blendedDailyRate * daysAfterToday);
   const overshootAmount = roundCurrency(Math.max(projectedCycleSpend - budgetAmount, 0));
   const isOverExpectedDaily = averageDailyExpense > expectedDailyExpense;
 
@@ -230,5 +242,57 @@ export function computeHealthSummary(
           : "on_track",
     overshootAmount,
     isOverExpectedDaily,
+  };
+}
+
+export type ValidatedExpenseEntry = {
+  entryType: "expense" | "credit";
+  amount: number;
+  note: string;
+  category: string;
+  occurredAt: Date;
+};
+
+/** Pure validation shared by create and update. Throws a user-facing Error. */
+export function validateExpenseEntryInput(
+  input: { entryType: string; amount: number; note?: string; category?: string; occurredAt: string },
+  now: Date = new Date()
+): ValidatedExpenseEntry {
+  if (input.entryType !== "expense" && input.entryType !== "credit") {
+    throw new Error("Entry type must be either expense or credit.");
+  }
+
+  if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    throw new Error("Amount must be greater than zero.");
+  }
+
+  const occurredAt = parseIstDateTime(input.occurredAt);
+
+  if (!occurredAt) {
+    throw new Error("Please provide a valid IST date and time.");
+  }
+
+  if (occurredAt.getTime() > now.getTime()) {
+    throw new Error("Future-dated entries are not allowed.");
+  }
+
+  const note = String(input.note || "").trim();
+
+  if (note.length > 500) {
+    throw new Error("Note must be 500 characters or fewer.");
+  }
+
+  const requestedCategory = String(input.category || "").trim();
+
+  if (requestedCategory && !isValidCategory(input.entryType, requestedCategory)) {
+    throw new Error("Category does not match the entry type.");
+  }
+
+  return {
+    entryType: input.entryType,
+    amount: roundCurrency(input.amount),
+    note,
+    category: resolveCategory(input.entryType, requestedCategory, note),
+    occurredAt,
   };
 }

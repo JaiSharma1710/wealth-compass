@@ -1,5 +1,8 @@
 import "server-only";
 
+import { isValidObjectId } from "mongoose";
+
+import { getCategoryLabel, resolveCategory } from "@/lib/expense-categories";
 import { connectToDatabase } from "@/lib/mongodb";
 import {
   computeHealthSummary,
@@ -12,18 +15,22 @@ import {
   getExpenseCycleForDate,
   getExpenseCycleFromStart,
   getIstParts,
-  parseIstDateTime,
   roundCurrency,
+  validateExpenseEntryInput,
 } from "@/lib/expenses-calculations";
 import type {
+  ExpenseCategoryBreakdown,
   ExpenseDashboardData,
   ExpenseEntrySummary,
   ExpenseHistoryPoint,
   SaveExpenseBudgetInput,
   SaveExpenseEntryInput,
+  UpdateExpenseEntryInput,
 } from "@/lib/expenses.types";
 import { ExpenseBudget } from "@/lib/models/expense-budget";
 import { ExpenseEntry } from "@/lib/models/expense-entry";
+
+const RECENT_ENTRIES_LIMIT = 400;
 
 type ExpenseEntryRecord = {
   _id: { toString(): string } | string;
@@ -31,6 +38,7 @@ type ExpenseEntryRecord = {
   entryType: "expense" | "credit";
   amount: number;
   note?: string;
+  category?: string;
   occurredAt: Date;
   createdAt?: Date;
 };
@@ -46,10 +54,6 @@ type ExpenseBudgetRecord = {
   createdAt?: Date;
   updatedAt?: Date;
 };
-
-function normalizeNote(value?: string) {
-  return String(value || "").trim();
-}
 
 function ensurePositiveNumber(value: number, label: string) {
   if (!Number.isFinite(value) || value <= 0) {
@@ -68,13 +72,88 @@ function ensureValidCycleTarget(startYear: number, startMonth: number) {
 }
 
 function normalizeEntry(record: ExpenseEntryRecord): ExpenseEntrySummary {
+  const category = resolveCategory(record.entryType, record.category, record.note || "");
+
   return {
     id: String(record._id),
     entryType: record.entryType,
     amount: record.amount,
     note: record.note || "",
+    category,
+    categoryLabel: getCategoryLabel(category),
     occurredAt: record.occurredAt.toISOString(),
   };
+}
+
+function buildCategoryBreakdown(
+  cycleEntries: ExpenseEntryRecord[],
+  previousCycleEntries: ExpenseEntryRecord[]
+): ExpenseCategoryBreakdown[] {
+  const sumByCategory = (entries: ExpenseEntryRecord[]) => {
+    const totals = new Map<string, { amount: number; count: number }>();
+
+    for (const entry of entries) {
+      if (entry.entryType !== "expense") continue;
+      const key = resolveCategory("expense", entry.category, entry.note || "");
+      const current = totals.get(key) || { amount: 0, count: 0 };
+      current.amount += entry.amount;
+      current.count += 1;
+      totals.set(key, current);
+    }
+
+    return totals;
+  };
+  const current = sumByCategory(cycleEntries);
+  const previous = sumByCategory(previousCycleEntries);
+  const total = [...current.values()].reduce((sum, entry) => sum + entry.amount, 0);
+
+  return [...current.entries()]
+    .map(([key, value]) => ({
+      key,
+      label: getCategoryLabel(key),
+      amount: roundCurrency(value.amount),
+      count: value.count,
+      percentage: total > 0 ? roundCurrency((value.amount / total) * 100) : 0,
+      previousAmount: roundCurrency(previous.get(key)?.amount || 0),
+    }))
+    .sort((left, right) => right.amount - left.amount);
+}
+
+// Budgets roll forward: a new cycle without its own budget inherits the latest one.
+async function ensureCurrentCycleBudget(userId: string, now: Date) {
+  const cycle = getExpenseCycleForDate(now);
+  const existing = await loadBudgetForCycle(userId, cycle.startYear, cycle.startMonth);
+
+  if (existing) {
+    return existing;
+  }
+
+  await connectToDatabase();
+
+  const latest = (await ExpenseBudget.findOne({ userId })
+    .sort({ cycleStartDate: -1 })
+    .lean()) as ExpenseBudgetRecord | null;
+
+  if (!latest) {
+    return null;
+  }
+
+  await ExpenseBudget.updateOne(
+    { userId, startYear: cycle.startYear, startMonth: cycle.startMonth },
+    {
+      $setOnInsert: {
+        userId,
+        startYear: cycle.startYear,
+        startMonth: cycle.startMonth,
+        cycleStartDate: createUtcDateFromIstParts(cycle.startYear, cycle.startMonth - 1, 5),
+        cycleEndDate: new Date(createUtcDateFromIstParts(cycle.startYear, cycle.startMonth, 5).getTime() - 1),
+        amount: latest.amount,
+      },
+    },
+    { upsert: true }
+  );
+
+  return loadBudgetForCycle(userId, cycle.startYear, cycle.startMonth);
 }
 
 function sortEntries(entries: ExpenseEntryRecord[]) {
@@ -205,7 +284,7 @@ export async function getExpenseDashboard(
   const page = Math.max(1, options?.page || 1);
   const entries = sortEntries(await loadEntries(userId));
   const cycle = getExpenseCycleForDate(now);
-  const cycleBudget = await loadBudgetForCycle(userId, cycle.startYear, cycle.startMonth);
+  const cycleBudget = await ensureCurrentCycleBudget(userId, now);
   const todayParts = getIstParts(now);
   const todayStart = createUtcDateFromIstParts(todayParts.year, todayParts.monthIndex, todayParts.day);
   const todayEnd = createUtcDateFromIstParts(
@@ -226,6 +305,18 @@ export async function getExpenseDashboard(
   );
   const cycleEntries = entries.filter((entry) => isWithinRange(entry.occurredAt, cycleStart, cycleEnd));
   const cycleSummary = computeWindowSummary("Current Cycle", cycleEntries);
+  const previousCycleStartParts = getIstParts(new Date(cycleStart.getTime() - 24 * 60 * 60 * 1000));
+  const previousCycle = getExpenseCycleForDate(
+    createUtcDateFromIstParts(
+      previousCycleStartParts.year,
+      previousCycleStartParts.monthIndex,
+      previousCycleStartParts.day,
+      12
+    )
+  );
+  const previousCycleEntries = entries.filter((entry) =>
+    isWithinRange(entry.occurredAt, new Date(previousCycle.startDate), new Date(previousCycle.endDate))
+  );
   const totalPages = Math.max(1, Math.ceil(entries.length / EXPENSE_ENTRY_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * EXPENSE_ENTRY_PAGE_SIZE;
@@ -239,7 +330,10 @@ export async function getExpenseDashboard(
       isRequired: !cycleBudget,
       cycle,
     },
-    health: computeHealthSummary(cycleBudget?.amount ?? null, cycleSummary.expenseTotal, cycle),
+    health: computeHealthSummary(cycleBudget?.amount ?? null, cycleSummary.expenseTotal, cycle, {
+      expenseTotal: computeWindowSummary("Previous Cycle", previousCycleEntries).expenseTotal,
+      totalDays: previousCycle.totalDays,
+    }),
     todaySummary: computeWindowSummary("Today", todayEntries),
     weekSummary: computeWindowSummary("This Week", weekEntries),
     cycleSummary,
@@ -255,38 +349,16 @@ export async function getExpenseDashboard(
       totalCount: entries.length,
       totalPages,
     },
+    categoryBreakdown: buildCategoryBreakdown(cycleEntries, previousCycleEntries),
+    previousCycleSummary: computeWindowSummary("Previous Cycle", previousCycleEntries),
+    recentEntries: entries.slice(0, RECENT_ENTRIES_LIMIT).map(normalizeEntry),
+    recentEntriesTruncated: entries.length > RECENT_ENTRIES_LIMIT,
   };
 }
 
 export async function saveExpenseEntry(userId: string, input: SaveExpenseEntryInput) {
-  ensurePositiveNumber(input.amount, "Amount");
-
-  if (input.entryType !== "expense" && input.entryType !== "credit") {
-    throw new Error("Entry type must be either expense or credit.");
-  }
-
-  const occurredAt = parseIstDateTime(input.occurredAt);
-
-  if (!occurredAt) {
-    throw new Error("Please provide a valid IST date and time.");
-  }
-
-  if (normalizeNote(input.note).length > 500) {
-    throw new Error("Note must be 500 characters or fewer.");
-  }
-
-  const now = new Date();
-
-  if (occurredAt.getTime() > now.getTime()) {
-    throw new Error("Future-dated entries are not allowed.");
-  }
-
-  const currentCycle = getExpenseCycleForDate(now);
-  const currentCycleBudget = await loadBudgetForCycle(
-    userId,
-    currentCycle.startYear,
-    currentCycle.startMonth
-  );
+  const valid = validateExpenseEntryInput(input);
+  const currentCycleBudget = await ensureCurrentCycleBudget(userId, new Date());
 
   if (!currentCycleBudget) {
     throw new Error("Set the current cycle budget before adding a new entry.");
@@ -294,13 +366,41 @@ export async function saveExpenseEntry(userId: string, input: SaveExpenseEntryIn
 
   await connectToDatabase();
 
-  await ExpenseEntry.create({
-    userId,
-    entryType: input.entryType,
-    amount: roundCurrency(input.amount),
-    note: normalizeNote(input.note),
-    occurredAt,
-  });
+  await ExpenseEntry.create({ userId, ...valid });
+
+  return getExpenseDashboard(userId);
+}
+
+export async function updateExpenseEntry(userId: string, entryId: string, input: UpdateExpenseEntryInput) {
+  if (!isValidObjectId(entryId)) {
+    throw new Error("Entry not found.");
+  }
+
+  const valid = validateExpenseEntryInput(input);
+
+  await connectToDatabase();
+
+  const result = await ExpenseEntry.updateOne({ _id: entryId, userId }, { $set: valid });
+
+  if (result.matchedCount === 0) {
+    throw new Error("Entry not found.");
+  }
+
+  return getExpenseDashboard(userId);
+}
+
+export async function deleteExpenseEntry(userId: string, entryId: string) {
+  if (!isValidObjectId(entryId)) {
+    throw new Error("Entry not found.");
+  }
+
+  await connectToDatabase();
+
+  const result = await ExpenseEntry.deleteOne({ _id: entryId, userId });
+
+  if (result.deletedCount === 0) {
+    throw new Error("Entry not found.");
+  }
 
   return getExpenseDashboard(userId);
 }
