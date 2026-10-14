@@ -17,6 +17,7 @@ import {
   ReceiptText,
   Scale,
   Settings,
+  Sparkles,
   Sun,
   Target,
   Wallet,
@@ -38,7 +39,10 @@ type NavItem = {
 const navGroups: Array<{ title: string | null; items: NavItem[] }> = [
   {
     title: null,
-    items: [{ href: "/dashboard", icon: LayoutDashboard, label: "Overview", short: "Home" }],
+    items: [
+      { href: "/dashboard", icon: LayoutDashboard, label: "Overview", short: "Home" },
+      { href: "/advisor", icon: Sparkles, label: "AI Advisor" },
+    ],
   },
   {
     title: "Investments",
