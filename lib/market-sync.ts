@@ -4,6 +4,7 @@ import { Types } from "mongoose";
 
 import { syncSovereignGoldBondValuesForUser } from "@/lib/gold";
 import { syncGoldValuations } from "@/lib/gold-tracking";
+import { refreshResearchForSymbols } from "@/lib/stock-research";
 import {
   getLatestHoldingValueMap,
   getTodayDateKey,
@@ -387,6 +388,9 @@ export async function runCronMarketSync() {
 
     try {
       const { batch, gold } = await runMarketSync({ userId, source: "cron" });
+      // Fundamentals are cached for a week; this only refetches stale ones.
+      const positions = await getActiveStockPositions(userId).catch(() => []);
+      await refreshResearchForSymbols(positions.map((position) => position.symbol)).catch(() => 0);
       results.push({
         userId,
         synced: batch?.itemCounts.synced ?? 0,

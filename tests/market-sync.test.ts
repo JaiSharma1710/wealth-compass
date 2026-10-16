@@ -56,6 +56,10 @@ vi.mock("@/lib/gold", () => ({
   syncSovereignGoldBondValuesForUser: vi.fn().mockResolvedValue({ updatedCount: 0 }),
 }));
 
+vi.mock("@/lib/stock-research", () => ({
+  refreshResearchForSymbols: vi.fn().mockResolvedValue(0),
+}));
+
 vi.mock("@/lib/gold-tracking", () => ({
   syncGoldValuations: vi.fn().mockResolvedValue({ updated: 0, failed: 0 }),
 }));

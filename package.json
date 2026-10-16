@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "research:fetch": "RESEARCH_FILE=research/fetch.ts node research/run.mjs",
+    "research:backtest": "RESEARCH_FILE=research/backtest.ts node research/run.mjs",
+    "research:inspect": "RESEARCH_FILE=research/inspect.ts node research/run.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

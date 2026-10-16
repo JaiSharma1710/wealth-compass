@@ -13,6 +13,7 @@ import {
   LogOut,
   Moon,
   MoreHorizontal,
+  Newspaper,
   PieChart,
   ReceiptText,
   Scale,
@@ -50,6 +51,7 @@ const navGroups: Array<{ title: string | null; items: NavItem[] }> = [
       { href: "/stocks", icon: LineChart, label: "Stocks", short: "Stocks" },
       { href: "/mutual-funds", icon: PieChart, label: "Mutual Funds", short: "Funds" },
       { href: "/gold", icon: Coins, label: "Gold" },
+      { href: "/news", icon: Newspaper, label: "Market News" },
     ],
   },
   {

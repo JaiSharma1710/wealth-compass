@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { LineChart, Minus, Plus, RefreshCw, Trash2 } from "lucide-react";
 import toast from "react-hot-toast";
 
+import { StocksResearchSummary } from "@/components/stocks-research-summary";
 import { displaySymbol, StockBuySheet, StockSellSheet } from "@/components/stocks-trade-sheets";
 import { RankedBars } from "@/components/ui/charts";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -369,6 +370,8 @@ export function StocksView({ initialData, currencyCode }: { initialData: StockDa
               delta={topMover ? <Delta percent={topMover.todayPnLPercent} size="xs" /> : <span className="text-xs text-ink-3">After next sync</span>}
             />
           </div>
+
+          <StocksResearchSummary />
 
           <div className="mt-4 grid gap-4 xl:grid-cols-3">
             <Card className="xl:col-span-2">

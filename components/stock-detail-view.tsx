@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ArrowLeft, ExternalLink, LineChart, Minus, Newspaper, Plus } from "lucide-react";
 
+import { StockResearchPanel, type AnalysisReportView, type FinancialRow } from "@/components/stock-research-panel";
 import { displaySymbol, StockBuySheet, StockSellSheet } from "@/components/stocks-trade-sheets";
 import { TrendChart } from "@/components/ui/charts";
 import {
@@ -20,6 +21,7 @@ import {
   Skeleton,
 } from "@/components/ui/kit";
 import { formatDate, formatMoney, formatNumber, formatPercent, formatRelativeTime } from "@/lib/format";
+import type { StockScorecard } from "@/lib/stock-model/types";
 import type { StockChartPoint, StockDetailData, StockNewsItem } from "@/lib/stocks.types";
 
 const RANGES = [
@@ -31,7 +33,21 @@ const RANGES = [
 
 type Range = (typeof RANGES)[number]["value"];
 
-export function StockDetailView({ initialData, currencyCode }: { initialData: StockDetailData; currencyCode: string }) {
+export function StockDetailView({
+  initialData,
+  currencyCode,
+  research,
+}: {
+  initialData: StockDetailData;
+  currencyCode: string;
+  research: {
+    scorecard: StockScorecard | null;
+    financials: FinancialRow[];
+    reports: AnalysisReportView[];
+    signal: { label: string; reason: string } | null;
+    error: string | null;
+  };
+}) {
   const router = useRouter();
   const currency = currencyCode;
   const data = initialData;
@@ -186,6 +202,15 @@ export function StockDetailView({ initialData, currencyCode }: { initialData: St
           )}
         </Card>
       </div>
+
+      <StockResearchPanel
+        symbol={data.symbol}
+        scorecard={research.scorecard}
+        financials={research.financials}
+        initialReports={research.reports}
+        signal={research.signal}
+        error={research.error}
+      />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
